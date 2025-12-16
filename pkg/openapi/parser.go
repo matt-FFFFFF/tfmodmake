@@ -1,3 +1,4 @@
+// Package openapi provides functions to parse OpenAPI specifications and extract resource schemas.
 package openapi
 
 import (
@@ -27,10 +28,10 @@ func LoadSpec(path string) (*openapi3.T, error) {
 func FindResource(doc *openapi3.T, resourceType string) (*openapi3.Schema, error) {
 	// Normalize resource type for search
 	// e.g. Microsoft.ContainerService/managedClusters
-	
+
 	// Strategy: Look for a path that ends with the resource type (ignoring {name})
 	// Azure paths usually look like: .../providers/Microsoft.ContainerService/managedClusters/{resourceName}
-	
+
 	var bestMatchSchema *openapi3.Schema
 
 	for path, pathItem := range doc.Paths.Map() {
@@ -63,7 +64,7 @@ func FindResource(doc *openapi3.T, resourceType string) (*openapi3.Schema, error
 	// Fallback: Try to find in definitions/schemas if the resourceType matches a schema name
 	// This is less reliable as schema names are arbitrary, but sometimes they match.
 	// For Azure, resourceType "Microsoft.ContainerService/managedClusters" might not match "ManagedCluster" directly without mapping.
-	
+
 	return nil, fmt.Errorf("resource type %s not found in spec", resourceType)
 }
 
