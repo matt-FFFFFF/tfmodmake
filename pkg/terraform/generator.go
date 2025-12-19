@@ -10,17 +10,27 @@ import (
 	"unicode"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // Generate generates variables.tf, locals.tf, main.tf, and outputs.tf based on the schema.
-func Generate(schema *openapi3.Schema, resourceType string, localName string, supportsTags bool) error {
+func Generate(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool) error {
+	hasSchema := schema != nil
+
+	if err := generateTerraform(); err != nil {
+		return err
+	}
 	if err := generateVariables(schema, supportsTags); err != nil {
 		return err
 	}
-	if err := generateLocals(schema, localName); err != nil {
-		return err
+	if hasSchema {
+		if err := generateLocals(schema, localName); err != nil {
+			return err
+		}
 	}
-	if err := generateMain(resourceType, localName, supportsTags); err != nil {
+	if err := generateMain(resourceType, apiVersion, localName, supportsTags, hasSchema); err != nil {
 		return err
 	}
 	if err := generateOutputs(); err != nil {
@@ -29,43 +39,90 @@ func Generate(schema *openapi3.Schema, resourceType string, localName string, su
 	return nil
 }
 
-func generateVariables(schema *openapi3.Schema, supportsTags bool) error {
-	f, err := os.Create("variables.tf")
+func setExpressionAttribute(body *hclwrite.Body, name, expr string) error {
+	tokens, err := tokensForExpression(expr)
 	if err != nil {
+		return fmt.Errorf("parsing expression %q: %w", expr, err)
+	}
+	body.SetAttributeRaw(name, tokens)
+	return nil
+}
+
+func tokensForExpression(expr string) (hclwrite.Tokens, error) {
+	content := fmt.Sprintf("attr = %s\n", expr)
+	file, diag := hclwrite.ParseConfig([]byte(content), "expression.hcl", hcl.Pos{Line: 1, Column: 1})
+	if diag.HasErrors() {
+		return nil, diag
+	}
+
+	attr := file.Body().GetAttribute("attr")
+	if attr == nil {
+		return nil, fmt.Errorf("unable to parse expression")
+	}
+
+	return attr.Expr().BuildTokens(nil), nil
+}
+
+func writeHCLFile(path string, file *hclwrite.File) error {
+	return os.WriteFile(path, file.Bytes(), 0o644)
+}
+
+func generateTerraform() error {
+	file := hclwrite.NewEmptyFile()
+	body := file.Body()
+
+	tfBlock := body.AppendNewBlock("terraform", nil)
+	tfBody := tfBlock.Body()
+	tfBody.SetAttributeValue("required_version", cty.StringVal("~> 1.12"))
+
+	providers := tfBody.AppendNewBlock("required_providers", nil)
+	azapi := providers.Body().AppendNewBlock("azapi", nil)
+	azapiBody := azapi.Body()
+	azapiBody.SetAttributeValue("source", cty.StringVal("azure/azapi"))
+	azapiBody.SetAttributeValue("version", cty.StringVal("~> 2.7"))
+
+	return writeHCLFile("terraform.tf", file)
+}
+
+func generateVariables(schema *openapi3.Schema, supportsTags bool) error {
+	file := hclwrite.NewEmptyFile()
+	body := file.Body()
+
+	appendVariable := func(name, description, typeExpr string) (*hclwrite.Body, error) {
+		block := body.AppendNewBlock("variable", []string{name})
+		varBody := block.Body()
+		varBody.SetAttributeValue("description", cty.StringVal(description))
+		if err := setExpressionAttribute(varBody, "type", typeExpr); err != nil {
+			return nil, err
+		}
+		return varBody, nil
+	}
+
+	if _, err := appendVariable("name", "The name of the resource.", "string"); err != nil {
 		return err
 	}
-	defer f.Close()
 
-	fmt.Fprint(f, `variable "name" {
-  description = "The name of the resource."
-  type        = string
-}
-
-variable "parent_id" {
-  description = "The parent resource ID for this resource."
-  type        = string
-}
-
-`)
+	if _, err := appendVariable("parent_id", "The parent resource ID for this resource.", "string"); err != nil {
+		return err
+	}
 
 	if supportsTags {
-		fmt.Fprint(f, `
-variable "tags" {
-  description = "Tags to apply to the resource."
-  type        = map(string)
-  default     = {}
-}
-`)
+		tagsBody, err := appendVariable("tags", "Tags to apply to the resource.", "map(string)")
+		if err != nil {
+			return err
+		}
+		if err := setExpressionAttribute(tagsBody, "default", "null"); err != nil {
+			return err
+		}
 	}
 
-	fmt.Fprint(f, "\n")
-
-	// Sort properties for deterministic output
 	var keys []string
-	for k := range schema.Properties {
-		keys = append(keys, k)
+	if schema != nil {
+		for k := range schema.Properties {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
 	}
-	sort.Strings(keys)
 
 	for _, name := range keys {
 		prop := schema.Properties[name]
@@ -95,7 +152,10 @@ variable "tags" {
 		}
 		isNestedObject := nestedDocSchema != nil
 
-		fmt.Fprintf(f, "variable \"%s\" {\n", tfName)
+		varBody, err := appendVariable(tfName, "", tfType)
+		if err != nil {
+			return err
+		}
 
 		if isNestedObject {
 			var sb strings.Builder
@@ -112,29 +172,27 @@ variable "tags" {
 
 			sb.WriteString(buildNestedDescription(nestedDocSchema, ""))
 
-			fmt.Fprintf(f, "  description = <<-DESCRIPTION\n%s  DESCRIPTION\n", sb.String())
+			varBody.SetAttributeValue("description", cty.StringVal(sb.String()))
 		} else {
 			description := propSchema.Description
 			if description == "" {
 				description = fmt.Sprintf("The %s of the resource.", name)
 			}
-			description = strings.ReplaceAll(description, "\"", "\\\"")
 			description = strings.ReplaceAll(description, "\n", " ")
-			fmt.Fprintf(f, "  description = \"%s\"\n", description)
+			varBody.SetAttributeValue("description", cty.StringVal(description))
 		}
 
-		fmt.Fprintf(f, "  type        = %s\n", tfType)
-
-		isRequired := false
-		if slices.Contains(schema.Required, name) {
-			isRequired = true
+		if err := setExpressionAttribute(varBody, "type", tfType); err != nil {
+			return err
 		}
 
+		isRequired := slices.Contains(schema.Required, name)
 		if !isRequired {
-			fmt.Fprintf(f, "  default     = null\n")
+			if err := setExpressionAttribute(varBody, "default", "null"); err != nil {
+				return err
+			}
 		}
 
-		// Validation for enums
 		if len(propSchema.Enum) > 0 {
 			var enumValues []string
 			var enumValuesRaw []string
@@ -144,45 +202,43 @@ variable "tags" {
 			}
 			enumStr := fmt.Sprintf("[%s]", strings.Join(enumValues, ", "))
 
-			fmt.Fprintf(f, "\n  validation {\n")
-			if !isRequired {
-				fmt.Fprintf(f, "    condition     = var.%s == null || contains(%s, var.%s)\n", tfName, enumStr, tfName)
-			} else {
-				fmt.Fprintf(f, "    condition     = contains(%s, var.%s)\n", enumStr, tfName)
-			}
-			fmt.Fprintf(f, "    error_message = \"%s must be one of: %s.\"\n", tfName, strings.Join(enumValuesRaw, ", "))
-			fmt.Fprintf(f, "  }\n")
-		}
+			validation := varBody.AppendNewBlock("validation", nil)
+			validationBody := validation.Body()
 
-		fmt.Fprintf(f, "}\n\n")
+			if !isRequired {
+				if err := setExpressionAttribute(validationBody, "condition", fmt.Sprintf("var.%s == null || contains(%s, var.%s)", tfName, enumStr, tfName)); err != nil {
+					return err
+				}
+			} else {
+				if err := setExpressionAttribute(validationBody, "condition", fmt.Sprintf("contains(%s, var.%s)", enumStr, tfName)); err != nil {
+					return err
+				}
+			}
+
+			validationBody.SetAttributeValue("error_message", cty.StringVal(fmt.Sprintf("%s must be one of: %s.", tfName, strings.Join(enumValuesRaw, ", "))))
+		}
 	}
 
-	return nil
+	return writeHCLFile("variables.tf", file)
 }
 
 func generateLocals(schema *openapi3.Schema, localName string) error {
-	f, err := os.Create("locals.tf")
-	if err != nil {
+	if schema == nil {
+		return nil
+	}
+
+	file := hclwrite.NewEmptyFile()
+	body := file.Body()
+
+	locals := body.AppendNewBlock("locals", nil)
+	localBody := locals.Body()
+
+	valueExpression := constructValue(schema, "var", true)
+	if err := setExpressionAttribute(localBody, localName, valueExpression); err != nil {
 		return err
 	}
-	defer f.Close()
 
-	fmt.Fprintf(f, "locals {\n")
-
-	// We construct the body recursively
-	body := constructValue(schema, "var", true)
-
-	// The body returned by constructValue for the root object will be something like:
-	// {
-	//   location = var.location
-	//   ...
-	// }
-	// We want to assign it to the specified local name
-
-	fmt.Fprintf(f, "  %s = %s\n", localName, body)
-	fmt.Fprintf(f, "}\n")
-
-	return nil
+	return writeHCLFile("locals.tf", file)
 }
 
 func constructValue(schema *openapi3.Schema, accessPath string, isRoot bool) string {
@@ -422,47 +478,60 @@ func SupportsTags(schema *openapi3.Schema) bool {
 	return true
 }
 
-func generateMain(resourceType, localName string, supportsTags bool) error {
-	f, err := os.Create("main.tf")
-	if err != nil {
+func generateMain(resourceType, apiVersion, localName string, supportsTags, hasSchema bool) error {
+	file := hclwrite.NewEmptyFile()
+	body := file.Body()
+
+	apiVersion = strings.TrimSpace(apiVersion)
+	if apiVersion == "" {
+		apiVersion = "apiVersion"
+	}
+	resourceTypeWithAPIVersion := fmt.Sprintf("%s@%s", resourceType, apiVersion)
+
+	resourceBlock := body.AppendNewBlock("resource", []string{"azapi_resource", "this"})
+	resourceBody := resourceBlock.Body()
+	resourceBody.SetAttributeValue("type", cty.StringVal(resourceTypeWithAPIVersion))
+	if err := setExpressionAttribute(resourceBody, "name", "var.name"); err != nil {
 		return err
 	}
-	defer f.Close()
-
-	resourceTypeWithAPIVersion := fmt.Sprintf("%s@apiVersion", resourceType)
-
-	fmt.Fprintf(f, "resource \"azapi_resource\" \"this\" {\n")
-	fmt.Fprintf(f, "  type      = \"%s\"\n", resourceTypeWithAPIVersion)
-	fmt.Fprintf(f, "  name      = var.name\n")
-	fmt.Fprintf(f, "  parent_id = var.parent_id\n")
-	fmt.Fprintf(f, "  body = {\n")
-	fmt.Fprintf(f, "    properties = local.%s\n", localName)
-	fmt.Fprintf(f, "  }\n")
-	if supportsTags {
-		fmt.Fprintf(f, "  tags = var.tags\n")
+	if err := setExpressionAttribute(resourceBody, "parent_id", "var.parent_id"); err != nil {
+		return err
 	}
-	fmt.Fprintf(f, "}\n")
 
-	return nil
+	bodyExpr := "{}"
+	if hasSchema {
+		bodyExpr = fmt.Sprintf("{\n  properties = local.%s\n}", localName)
+	}
+	if err := setExpressionAttribute(resourceBody, "body", bodyExpr); err != nil {
+		return err
+	}
+
+	if supportsTags {
+		if err := setExpressionAttribute(resourceBody, "tags", "var.tags"); err != nil {
+			return err
+		}
+	}
+
+	return writeHCLFile("main.tf", file)
 }
 
 func generateOutputs() error {
-	f, err := os.Create("outputs.tf")
-	if err != nil {
+	file := hclwrite.NewEmptyFile()
+	body := file.Body()
+
+	resourceID := body.AppendNewBlock("output", []string{"resource_id"})
+	resourceIDBody := resourceID.Body()
+	resourceIDBody.SetAttributeValue("description", cty.StringVal("The ID of the created resource."))
+	if err := setExpressionAttribute(resourceIDBody, "value", "azapi_resource.this.id"); err != nil {
 		return err
 	}
-	defer f.Close()
 
-	fmt.Fprint(f, `output "resource_id" {
-  description = "The ID of the created resource."
-  value       = azapi_resource.this.id
-}
+	name := body.AppendNewBlock("output", []string{"name"})
+	nameBody := name.Body()
+	nameBody.SetAttributeValue("description", cty.StringVal("The name of the created resource."))
+	if err := setExpressionAttribute(nameBody, "value", "azapi_resource.this.name"); err != nil {
+		return err
+	}
 
-output "name" {
-  description = "The name of the created resource."
-  value       = azapi_resource.this.name
-}
-`)
-
-	return nil
+	return writeHCLFile("outputs.tf", file)
 }

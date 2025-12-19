@@ -46,7 +46,7 @@ func FindResource(doc *openapi3.T, resourceType string) (*openapi3.Schema, error
 	for path, pathItem := range doc.Paths.Map() {
 		// Check if path corresponds to the resource type
 		// We look for .../providers/<resourceType>/{name} or just .../<resourceType>
-		
+
 		lowerPath := strings.ToLower(path)
 		lowerResourceType := strings.ToLower(searchType)
 		idx := strings.Index(lowerPath, lowerResourceType)
@@ -59,7 +59,7 @@ func FindResource(doc *openapi3.T, resourceType string) (*openapi3.Schema, error
 
 			// Check suffix
 			suffix := lowerPath[idx+len(lowerResourceType):]
-			
+
 			// Ensure we matched a full path segment (end)
 			if suffix != "" && suffix[0] != '/' {
 				continue
@@ -68,7 +68,7 @@ func FindResource(doc *openapi3.T, resourceType string) (*openapi3.Schema, error
 			// Check for child resources
 			// We allow at most one path segment after the resource type (the resource name)
 			// Suffix is either "" or "/{name}" or "/{name}/child..."
-			
+
 			segments := 0
 			if suffix != "" {
 				// Remove leading slash
@@ -166,6 +166,9 @@ func NavigateSchema(schema *openapi3.Schema, path string) (*openapi3.Schema, err
 		}
 		if prop.Value == nil {
 			return nil, fmt.Errorf("property %s has nil schema", part)
+		}
+		if prop.Value.ReadOnly {
+			return nil, nil // Indicate read-only property
 		}
 		current = prop.Value
 	}

@@ -83,6 +83,12 @@ func TestNavigateSchema(t *testing.T) {
 					Type: &openapi3.Types{"string"},
 				},
 			},
+			"readOnlyRoot": {
+				Value: &openapi3.Schema{
+					Type:     &openapi3.Types{"string"},
+					ReadOnly: true,
+				},
+			},
 			"nested": {
 				Value: &openapi3.Schema{
 					Type: &openapi3.Types{"object"},
@@ -124,6 +130,13 @@ func TestNavigateSchema(t *testing.T) {
 			schema:  rootSchema,
 			path:    "nested.child",
 			want:    rootSchema.Properties["nested"].Value.Properties["child"].Value,
+			wantErr: false,
+		},
+		{
+			name:    "Read-only root property",
+			schema:  rootSchema,
+			path:    "readOnlyRoot",
+			want:    nil,
 			wantErr: false,
 		},
 		{
