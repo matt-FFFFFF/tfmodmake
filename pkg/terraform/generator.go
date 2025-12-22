@@ -580,6 +580,8 @@ func generateMain(resourceType, apiVersion, localName string, supportsTags, supp
 		resourceBody.SetAttributeRaw("tags", hclgen.TokensForTraversal("var", "tags"))
 	}
 
+	resourceBody.SetAttributeValue("response_export_values", cty.ListValEmpty(cty.String))
+
 	return hclgen.WriteFile("main.tf", file)
 }
 

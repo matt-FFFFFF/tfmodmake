@@ -109,8 +109,9 @@ func writeVariablesFile(moduleName string, typeTokens hclwrite.Tokens, descripti
 
 	block := body.AppendNewBlock("variable", []string{moduleName})
 	blockBody := block.Body()
-	blockBody.SetAttributeRaw("description", hclgen.TokensForHeredoc(description))
+	blockBody.SetAttributeRaw("description", hclgen.TokensForHeredoc(strings.TrimSpace(description)))
 	blockBody.SetAttributeRaw("type", typeTokens)
+	blockBody.SetAttributeValue("default", cty.MapValEmpty(cty.DynamicPseudoType))
 
 	filename := fmt.Sprintf("variables.%s.tf", moduleName)
 	return os.WriteFile(filename, file.Bytes(), 0o644)

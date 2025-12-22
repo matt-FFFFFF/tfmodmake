@@ -14,6 +14,7 @@ CLI tool to generate base Terraform configuration (`variables.tf` and `locals.tf
 *   Customizable local variable naming.
 *   Generates scaffolded `main.tf` and `outputs.tf` for an `azapi_resource`.
 *   Includes base variables for `name`, `parent_id`, and conditional `tags` (when the resource supports tags).
+*   Generates map-based module blocks for submodules using `addsub` command.
 
 ## Installation
 
@@ -37,6 +38,18 @@ go build -o tfmodmake cmd/tfmodmake/main.go
 *   `-resource`: (Required) Resource type to generate configuration for (e.g., `Microsoft.ContainerService/managedClusters`).
 *   `-root`: (Optional) Dot-separated path to the root object within the resource schema (e.g., `properties` or `properties.networkProfile`). If specified, only properties under this root are generated as variables.
 *   `-local-name`: (Optional) Name of the local variable to generate in `locals.tf`. Defaults to `resource_body` or a snake_case version of the `-root` path.
+
+### Submodule Generation
+
+To generate a map-based module block for a submodule:
+
+```bash
+./tfmodmake addsub <path_to_submodule>
+```
+
+This command reads the Terraform module at the specified path and generates:
+1.  `variables.<module_name>.tf`: A variable accepting a map of objects matching the submodule's inputs.
+2.  `main.<module_name>.tf`: A `module` block using `for_each` to iterate over the variable.
 
 ## Examples
 

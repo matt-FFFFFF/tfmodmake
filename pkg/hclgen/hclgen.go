@@ -1,3 +1,4 @@
+// Package hclgen provides helper functions for generating HCL files.
 package hclgen
 
 import (
