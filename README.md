@@ -7,6 +7,7 @@ CLI tool to generate base Terraform configuration (`variables.tf` and `locals.tf
 *   Parses OpenAPI 3.0 specifications from local files or URLs.
 *   Extracts schema for a specific resource type.
 *   Generates Terraform variables with appropriate types and descriptions.
+*   Flattens the OpenAPI top-level `properties` bag into idiomatic top-level Terraform variables.
 *   Handles nested objects and arrays.
 *   Generates validation blocks for top-level enum variables.
 *   Creates a `locals.tf` file to map Terraform variables back to the API JSON structure.
@@ -58,9 +59,17 @@ This command reads the Terraform module at the specified path and generates:
 Generate configuration for the entire resource:
 
 ```bash
+# example with AKS and stable API
 ./tfmodmake \
-  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2023-01-01/managedClusters.json \
+  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json \
   -resource Microsoft.ContainerService/managedClusters
+```
+
+```bash
+# example with Container Apps Managed Environment & preview API
+./tfmodmake \
+  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/ContainerApps/preview/2025-10-02-preview/ManagedEnvironments.json \
+  -resource Microsoft.App/managedEnvironments
 ```
 
 ### Targeting a Sub-property
@@ -96,3 +105,7 @@ The tool generates four files in the current directory:
 2.  `locals.tf`: Contains the local value constructing the JSON body structure.
 3.  `main.tf`: Scaffold for the `azapi_resource` using the generated locals.
 4.  `outputs.tf`: Outputs exposing the resource ID and name.
+
+When generating the full resource schema (no `-root`), the OpenAPI top-level `properties` object is flattened so its children become top-level Terraform variables (for example `app_logs_configuration`, `custom_domain_configuration`, etc.), and `locals.tf` reconstructs the JSON `properties` object from those variables.
+
+When using `-root properties`, `locals.tf` represents the `properties` object and `main.tf` wraps it under `body.properties`.
