@@ -302,6 +302,27 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 		}
 	}
 
+	// Add secret field variables (extracted from nested structures)
+	for i, secret := range secrets {
+		if i == 0 && len(keys) > 0 {
+			body.AppendNewline()
+		}
+		
+		secretVarBody, err := appendVariable(
+			secret.varName,
+			secret.schema.Description,
+			mapType(secret.schema),
+		)
+		if err != nil {
+			return err
+		}
+		
+		secretVarBody.SetAttributeRaw("default", hclwrite.TokensForIdentifier("null"))
+		secretVarBody.SetAttributeValue("ephemeral", cty.True)
+		
+		body.AppendNewline()
+	}
+
 	// Add secret version variables
 	for i, secret := range secrets {
 		if i == 0 && len(keys) > 0 {

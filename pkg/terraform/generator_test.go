@@ -573,12 +573,17 @@ func TestGenerate_WithSecretFields(t *testing.T) {
 	// Check variables.tf
 	varsBody := parseHCLBody(t, "variables.tf")
 
-	// Normal field should be generated as a variable
-	normalFieldVar := requireBlock(t, varsBody, "variable", "normal_field")
-	assert.NotNil(t, normalFieldVar)
-	assert.Equal(t, "string", expressionString(t, normalFieldVar.Body.Attributes["type"].Expr))
+	// Properties should be generated as a nested object variable
+	propertiesVar := requireBlock(t, varsBody, "variable", "properties")
+	assert.NotNil(t, propertiesVar)
+	
+	// Check that properties has the right type structure including both normal and secret fields
+	typeExpr := expressionString(t, propertiesVar.Body.Attributes["type"].Expr)
+	assert.Contains(t, typeExpr, "normal_field")
+	assert.Contains(t, typeExpr, "connection_string")
+	assert.Contains(t, typeExpr, "api_key")
 
-	// Secret field should be generated as a variable with ephemeral = true
+	// Secret fields should also have separate top-level variables with ephemeral = true
 	connectionStringVar := requireBlock(t, varsBody, "variable", "connection_string")
 	assert.NotNil(t, connectionStringVar)
 	assert.Equal(t, "string", expressionString(t, connectionStringVar.Body.Attributes["type"].Expr))
@@ -587,6 +592,9 @@ func TestGenerate_WithSecretFields(t *testing.T) {
 	val, diags := ephemeralAttr.Expr.Value(nil)
 	require.False(t, diags.HasErrors())
 	assert.True(t, val.True(), "ephemeral should be true")
+
+	apiKeyVar := requireBlock(t, varsBody, "variable", "api_key")
+	assert.NotNil(t, apiKeyVar)
 
 	// Secret version variable should exist
 	connectionStringVersionVar := requireBlock(t, varsBody, "variable", "connection_string_version")
@@ -607,8 +615,8 @@ func TestGenerate_WithSecretFields(t *testing.T) {
 	localAttr := localsBlock.Body.Attributes["resource_body"]
 	localExpr := expressionString(t, localAttr.Expr)
 	
-	// Normal field should be present
-	assert.Contains(t, localExpr, "normalField = var.normal_field")
+	// Normal field should be present (nested under properties)
+	assert.Contains(t, localExpr, "normalField = var.properties.normal_field")
 	
 	// Secret fields should NOT be in locals
 	assert.NotContains(t, localExpr, "connectionString")
