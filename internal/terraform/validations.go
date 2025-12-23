@@ -1,0 +1,526 @@
+package terraform
+
+import (
+	"fmt"
+	"slices"
+	"sort"
+
+	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
+	"github.com/zclconf/go-cty/cty"
+)
+
+// generateValidations adds validation blocks to the variable body based on schema constraints.
+// It generates null-safe validations for strings, arrays, numbers, and enums.
+func generateValidations(varBody *hclwrite.Body, tfName string, propSchema *openapi3.Schema, isRequired bool) {
+	if propSchema == nil {
+		return
+	}
+
+	// Resolve schema references and allOf/oneOf/anyOf
+	resolvedSchema := resolveSchemaForValidation(propSchema)
+
+	// Generate enum validation
+	generateEnumValidation(varBody, tfName, resolvedSchema, isRequired)
+
+	// Generate string validations
+	generateStringValidations(varBody, tfName, resolvedSchema, isRequired)
+
+	// Generate array validations
+	generateArrayValidations(varBody, tfName, resolvedSchema, isRequired)
+
+	// Generate numeric validations
+	generateNumericValidations(varBody, tfName, resolvedSchema, isRequired)
+}
+
+// resolveSchemaForValidation resolves $ref, allOf, oneOf, anyOf to get effective schema for validation.
+func resolveSchemaForValidation(schema *openapi3.Schema) *openapi3.Schema {
+	if schema == nil {
+		return nil
+	}
+
+	// Start with the base schema
+	resolved := schema
+
+	// Handle allOf - merge all schemas
+	if len(schema.AllOf) > 0 {
+		merged := &openapi3.Schema{}
+		// Copy from base schema
+		if schema.Type != nil {
+			merged.Type = schema.Type
+		}
+		if len(schema.Enum) > 0 {
+			merged.Enum = schema.Enum
+		}
+		merged.MinLength = schema.MinLength
+		merged.MaxLength = schema.MaxLength
+		merged.Min = schema.Min
+		merged.Max = schema.Max
+		merged.ExclusiveMin = schema.ExclusiveMin
+		merged.ExclusiveMax = schema.ExclusiveMax
+		merged.MultipleOf = schema.MultipleOf
+		merged.MinItems = schema.MinItems
+		merged.MaxItems = schema.MaxItems
+		merged.UniqueItems = schema.UniqueItems
+		merged.Format = schema.Format
+		if schema.Extensions != nil {
+			merged.Extensions = make(map[string]any)
+			for k, v := range schema.Extensions {
+				merged.Extensions[k] = v
+			}
+		}
+
+		// Merge from each allOf schema
+		for _, schemaRef := range schema.AllOf {
+			if schemaRef.Value != nil {
+				s := schemaRef.Value
+				if s.Type != nil && merged.Type == nil {
+					merged.Type = s.Type
+				}
+				if len(s.Enum) > 0 && len(merged.Enum) == 0 {
+					merged.Enum = s.Enum
+				}
+				if s.MinLength != 0 && merged.MinLength == 0 {
+					merged.MinLength = s.MinLength
+				}
+				if s.MaxLength != nil && merged.MaxLength == nil {
+					merged.MaxLength = s.MaxLength
+				}
+				if s.Min != nil && merged.Min == nil {
+					merged.Min = s.Min
+				}
+				if s.Max != nil && merged.Max == nil {
+					merged.Max = s.Max
+				}
+				if s.ExclusiveMin && !merged.ExclusiveMin {
+					merged.ExclusiveMin = s.ExclusiveMin
+				}
+				if s.ExclusiveMax && !merged.ExclusiveMax {
+					merged.ExclusiveMax = s.ExclusiveMax
+				}
+				if s.MultipleOf != nil && merged.MultipleOf == nil {
+					merged.MultipleOf = s.MultipleOf
+				}
+				if s.MinItems != 0 && merged.MinItems == 0 {
+					merged.MinItems = s.MinItems
+				}
+				if s.MaxItems != nil && merged.MaxItems == nil {
+					merged.MaxItems = s.MaxItems
+				}
+				if s.UniqueItems && !merged.UniqueItems {
+					merged.UniqueItems = s.UniqueItems
+				}
+				if s.Format != "" && merged.Format == "" {
+					merged.Format = s.Format
+				}
+				// Merge extensions (e.g., x-ms-enum)
+				if s.Extensions != nil {
+					if merged.Extensions == nil {
+						merged.Extensions = make(map[string]any)
+					}
+					for k, v := range s.Extensions {
+						if _, exists := merged.Extensions[k]; !exists {
+							merged.Extensions[k] = v
+						}
+					}
+				}
+			}
+		}
+		resolved = merged
+	}
+
+	return resolved
+}
+
+// generateEnumValidation generates validation for enum values.
+func generateEnumValidation(varBody *hclwrite.Body, tfName string, schema *openapi3.Schema, isRequired bool) {
+	if schema == nil {
+		return
+	}
+
+	var enumValues []any
+
+	// Check for direct enum
+	if len(schema.Enum) > 0 {
+		enumValues = schema.Enum
+	}
+
+	// Check for x-ms-enum extension
+	if len(enumValues) == 0 && schema.Extensions != nil {
+		if xMsEnum, ok := schema.Extensions["x-ms-enum"]; ok {
+			if enumMap, ok := xMsEnum.(map[string]any); ok {
+				if values, ok := enumMap["values"]; ok {
+					if valuesSlice, ok := values.([]any); ok {
+						for _, v := range valuesSlice {
+							if valueMap, ok := v.(map[string]any); ok {
+								if value, ok := valueMap["value"]; ok {
+									enumValues = append(enumValues, value)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(enumValues) == 0 {
+		return
+	}
+
+	// Sort enum values for stable output
+	var enumValuesRaw []string
+	var enumTokens []hclwrite.Tokens
+	for _, v := range enumValues {
+		enumValuesRaw = append(enumValuesRaw, fmt.Sprintf("%v", v))
+	}
+	sort.Strings(enumValuesRaw)
+
+	for _, v := range enumValuesRaw {
+		enumTokens = append(enumTokens, hclwrite.TokensForValue(cty.StringVal(v)))
+	}
+
+	varRef := hclgen.TokensForTraversal("var", tfName)
+	enumList := hclwrite.TokensForTuple(enumTokens)
+	containsCall := hclwrite.TokensForFunctionCall("contains", enumList, varRef)
+
+	var condition hclwrite.Tokens
+	if !isRequired {
+		// Null-safe: var.x == null || contains([...], var.x)
+		condition = append(condition, varRef...)
+		condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+		condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+		condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		condition = append(condition, containsCall...)
+	} else {
+		condition = containsCall
+	}
+
+	validation := varBody.AppendNewBlock("validation", nil)
+	validationBody := validation.Body()
+	validationBody.SetAttributeRaw("condition", condition)
+	validationBody.SetAttributeValue("error_message", cty.StringVal(
+		fmt.Sprintf("%s must be one of: %s.", tfName, joinEnumValues(enumValuesRaw)),
+	))
+}
+
+// joinEnumValues joins enum values for error messages, limiting to a reasonable length.
+func joinEnumValues(values []string) string {
+	const maxLength = 200
+	const maxCount = 10
+
+	if len(values) <= maxCount {
+		joined := fmt.Sprintf("[%s]", fmt.Sprintf("%q", values[0]))
+		for i := 1; i < len(values); i++ {
+			joined = fmt.Sprintf("%s, %q", joined, values[i])
+		}
+		if len(joined) <= maxLength {
+			return joined
+		}
+	}
+
+	// Too many or too long, show first few and count
+	joined := fmt.Sprintf("%q", values[0])
+	count := 1
+	for i := 1; i < len(values) && i < maxCount && len(joined) < maxLength; i++ {
+		joined = fmt.Sprintf("%s, %q", joined, values[i])
+		count = i + 1
+	}
+
+	if count < len(values) {
+		return fmt.Sprintf("%s (and %d more)", joined, len(values)-count)
+	}
+	return joined
+}
+
+// generateStringValidations generates validation for string constraints.
+func generateStringValidations(varBody *hclwrite.Body, tfName string, schema *openapi3.Schema, isRequired bool) {
+	if schema == nil || schema.Type == nil {
+		return
+	}
+
+	if !slices.Contains(*schema.Type, "string") {
+		return
+	}
+
+	varRef := hclgen.TokensForTraversal("var", tfName)
+
+	// MinLength validation
+	if schema.MinLength != 0 {
+		lengthCall := hclwrite.TokensForFunctionCall("length", varRef)
+
+		var condition hclwrite.Tokens
+		if !isRequired {
+			// var.x == null || length(var.x) >= minLength
+			condition = append(condition, varRef...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+			condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		}
+		condition = append(condition, lengthCall...)
+		condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenGreaterThanEq, Bytes: []byte(" >= ")})
+		condition = append(condition, hclwrite.TokensForValue(cty.NumberIntVal(int64(schema.MinLength)))...)
+
+		validation := varBody.AppendNewBlock("validation", nil)
+		validationBody := validation.Body()
+		validationBody.SetAttributeRaw("condition", condition)
+		validationBody.SetAttributeValue("error_message", cty.StringVal(
+			fmt.Sprintf("%s must have a minimum length of %d.", tfName, schema.MinLength),
+		))
+	}
+
+	// MaxLength validation
+	if schema.MaxLength != nil {
+		lengthCall := hclwrite.TokensForFunctionCall("length", varRef)
+
+		var condition hclwrite.Tokens
+		if !isRequired {
+			// var.x == null || length(var.x) <= maxLength
+			condition = append(condition, varRef...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+			condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		}
+		condition = append(condition, lengthCall...)
+		condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenLessThanEq, Bytes: []byte(" <= ")})
+		condition = append(condition, hclwrite.TokensForValue(cty.NumberUIntVal(*schema.MaxLength))...)
+
+		validation := varBody.AppendNewBlock("validation", nil)
+		validationBody := validation.Body()
+		validationBody.SetAttributeRaw("condition", condition)
+		validationBody.SetAttributeValue("error_message", cty.StringVal(
+			fmt.Sprintf("%s must have a maximum length of %d.", tfName, *schema.MaxLength),
+		))
+	}
+
+	// Format validation (conservative allowlist)
+	if schema.Format != "" {
+		switch schema.Format {
+		case "uuid":
+			// Validate UUID format using regex
+			regexPattern := "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+			regexCall := hclwrite.TokensForFunctionCall("can",
+				hclwrite.TokensForFunctionCall("regex",
+					hclwrite.TokensForValue(cty.StringVal(regexPattern)),
+					varRef,
+				),
+			)
+
+			var condition hclwrite.Tokens
+			if !isRequired {
+				// var.x == null || can(regex(...))
+				condition = append(condition, varRef...)
+				condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+				condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+				condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+			}
+			condition = append(condition, regexCall...)
+
+			validation := varBody.AppendNewBlock("validation", nil)
+			validationBody := validation.Body()
+			validationBody.SetAttributeRaw("condition", condition)
+			validationBody.SetAttributeValue("error_message", cty.StringVal(
+				fmt.Sprintf("%s must be a valid UUID.", tfName),
+			))
+		}
+	}
+}
+
+// generateArrayValidations generates validation for array/list constraints.
+func generateArrayValidations(varBody *hclwrite.Body, tfName string, schema *openapi3.Schema, isRequired bool) {
+	if schema == nil || schema.Type == nil {
+		return
+	}
+
+	if !slices.Contains(*schema.Type, "array") {
+		return
+	}
+
+	varRef := hclgen.TokensForTraversal("var", tfName)
+
+	// MinItems validation
+	if schema.MinItems != 0 {
+		lengthCall := hclwrite.TokensForFunctionCall("length", varRef)
+
+		var condition hclwrite.Tokens
+		if !isRequired {
+			// var.x == null || length(var.x) >= minItems
+			condition = append(condition, varRef...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+			condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		}
+		condition = append(condition, lengthCall...)
+		condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenGreaterThanEq, Bytes: []byte(" >= ")})
+		condition = append(condition, hclwrite.TokensForValue(cty.NumberUIntVal(schema.MinItems))...)
+
+		validation := varBody.AppendNewBlock("validation", nil)
+		validationBody := validation.Body()
+		validationBody.SetAttributeRaw("condition", condition)
+		validationBody.SetAttributeValue("error_message", cty.StringVal(
+			fmt.Sprintf("%s must have at least %d item(s).", tfName, schema.MinItems),
+		))
+	}
+
+	// MaxItems validation
+	if schema.MaxItems != nil {
+		lengthCall := hclwrite.TokensForFunctionCall("length", varRef)
+
+		var condition hclwrite.Tokens
+		if !isRequired {
+			// var.x == null || length(var.x) <= maxItems
+			condition = append(condition, varRef...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+			condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		}
+		condition = append(condition, lengthCall...)
+		condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenLessThanEq, Bytes: []byte(" <= ")})
+		condition = append(condition, hclwrite.TokensForValue(cty.NumberUIntVal(*schema.MaxItems))...)
+
+		validation := varBody.AppendNewBlock("validation", nil)
+		validationBody := validation.Body()
+		validationBody.SetAttributeRaw("condition", condition)
+		validationBody.SetAttributeValue("error_message", cty.StringVal(
+			fmt.Sprintf("%s must have at most %d item(s).", tfName, *schema.MaxItems),
+		))
+	}
+
+	// UniqueItems validation (only for list types, not sets)
+	// We need to check if the Terraform type is list(...) not set(...)
+	// For now, we'll generate for all arrays and let the type system handle it
+	// The mapType function generates list(...) by default, so this is safe
+	if schema.UniqueItems {
+		lengthCall := hclwrite.TokensForFunctionCall("length", varRef)
+		distinctCall := hclwrite.TokensForFunctionCall("distinct", varRef)
+		lengthDistinctCall := hclwrite.TokensForFunctionCall("length", distinctCall)
+
+		var condition hclwrite.Tokens
+		if !isRequired {
+			// var.x == null || length(distinct(var.x)) == length(var.x)
+			condition = append(condition, varRef...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+			condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		}
+		condition = append(condition, lengthDistinctCall...)
+		condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+		condition = append(condition, lengthCall...)
+
+		validation := varBody.AppendNewBlock("validation", nil)
+		validationBody := validation.Body()
+		validationBody.SetAttributeRaw("condition", condition)
+		validationBody.SetAttributeValue("error_message", cty.StringVal(
+			fmt.Sprintf("%s must contain unique items.", tfName),
+		))
+	}
+}
+
+// generateNumericValidations generates validation for numeric constraints.
+func generateNumericValidations(varBody *hclwrite.Body, tfName string, schema *openapi3.Schema, isRequired bool) {
+	if schema == nil || schema.Type == nil {
+		return
+	}
+
+	if !slices.Contains(*schema.Type, "integer") && !slices.Contains(*schema.Type, "number") {
+		return
+	}
+
+	varRef := hclgen.TokensForTraversal("var", tfName)
+
+	// Minimum validation
+	if schema.Min != nil {
+		var condition hclwrite.Tokens
+		if !isRequired {
+			// var.x == null || var.x >= minimum (or >)
+			condition = append(condition, varRef...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+			condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		}
+		condition = append(condition, varRef...)
+		if schema.ExclusiveMin {
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenGreaterThan, Bytes: []byte(" > ")})
+		} else {
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenGreaterThanEq, Bytes: []byte(" >= ")})
+		}
+		condition = append(condition, hclwrite.TokensForValue(cty.NumberFloatVal(*schema.Min))...)
+
+		validation := varBody.AppendNewBlock("validation", nil)
+		validationBody := validation.Body()
+		validationBody.SetAttributeRaw("condition", condition)
+		if schema.ExclusiveMin {
+			validationBody.SetAttributeValue("error_message", cty.StringVal(
+				fmt.Sprintf("%s must be greater than %v.", tfName, *schema.Min),
+			))
+		} else {
+			validationBody.SetAttributeValue("error_message", cty.StringVal(
+				fmt.Sprintf("%s must be greater than or equal to %v.", tfName, *schema.Min),
+			))
+		}
+	}
+
+	// Maximum validation
+	if schema.Max != nil {
+		var condition hclwrite.Tokens
+		if !isRequired {
+			// var.x == null || var.x <= maximum (or <)
+			condition = append(condition, varRef...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+			condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		}
+		condition = append(condition, varRef...)
+		if schema.ExclusiveMax {
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenLessThan, Bytes: []byte(" < ")})
+		} else {
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenLessThanEq, Bytes: []byte(" <= ")})
+		}
+		condition = append(condition, hclwrite.TokensForValue(cty.NumberFloatVal(*schema.Max))...)
+
+		validation := varBody.AppendNewBlock("validation", nil)
+		validationBody := validation.Body()
+		validationBody.SetAttributeRaw("condition", condition)
+		if schema.ExclusiveMax {
+			validationBody.SetAttributeValue("error_message", cty.StringVal(
+				fmt.Sprintf("%s must be less than %v.", tfName, *schema.Max),
+			))
+		} else {
+			validationBody.SetAttributeValue("error_message", cty.StringVal(
+				fmt.Sprintf("%s must be less than or equal to %v.", tfName, *schema.Max),
+			))
+		}
+	}
+
+	// MultipleOf validation
+	if schema.MultipleOf != nil {
+		modCall := hclwrite.TokensForFunctionCall("abs",
+			hclwrite.TokensForFunctionCall("mod",
+				varRef,
+				hclwrite.TokensForValue(cty.NumberFloatVal(*schema.MultipleOf)),
+			),
+		)
+
+		var condition hclwrite.Tokens
+		if !isRequired {
+			// var.x == null || abs(mod(var.x, multipleOf)) < 0.000001
+			condition = append(condition, varRef...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
+			condition = append(condition, hclwrite.TokensForIdentifier("null")...)
+			condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
+		}
+		condition = append(condition, modCall...)
+		condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenLessThan, Bytes: []byte(" < ")})
+		// Use a small epsilon for floating point comparison
+		condition = append(condition, hclwrite.TokensForValue(cty.NumberFloatVal(0.000001))...)
+
+		validation := varBody.AppendNewBlock("validation", nil)
+		validationBody := validation.Body()
+		validationBody.SetAttributeRaw("condition", condition)
+		validationBody.SetAttributeValue("error_message", cty.StringVal(
+			fmt.Sprintf("%s must be a multiple of %v.", tfName, *schema.MultipleOf),
+		))
+	}
+}
