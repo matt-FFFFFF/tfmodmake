@@ -8,7 +8,135 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
+// GetEffectiveProperties returns the effective properties map for a schema,
+// merging properties from allOf components if present.
+// This is used for shape generation (types/locals) but preserves the original schema
+// for validation generation which has different merge semantics.
+func GetEffectiveProperties(schema *openapi3.Schema) (map[string]*openapi3.SchemaRef, error) {
+	if schema == nil {
+		return nil, nil
+	}
+
+	// If no allOf, return the schema's properties directly
+	if len(schema.AllOf) == 0 {
+		return schema.Properties, nil
+	}
+
+	// Merge properties from allOf components
+	result := make(map[string]*openapi3.SchemaRef)
+	
+	// Add base schema properties
+	for name, propRef := range schema.Properties {
+		result[name] = propRef
+	}
+
+	// Track which component defined each property for conflict detection
+	propertyOrigins := make(map[string]int)
+	for name := range schema.Properties {
+		propertyOrigins[name] = -1 // base schema
+	}
+
+	// Merge from each allOf component
+	for i, componentRef := range schema.AllOf {
+		if componentRef == nil || componentRef.Value == nil {
+			continue
+		}
+
+		// Recursively get effective properties for the component
+		componentProps, err := GetEffectiveProperties(componentRef.Value)
+		if err != nil {
+			return nil, fmt.Errorf("getting properties from allOf component %d: %w", i, err)
+		}
+
+		for propName, propRef := range componentProps {
+			if propRef == nil || propRef.Value == nil {
+				continue
+			}
+
+			if existingRef, exists := result[propName]; exists {
+				if existingRef != nil && existingRef.Value != nil {
+					// Check if schemas are equivalent
+					if !schemasEquivalent(existingRef.Value, propRef.Value) {
+						originIdx := propertyOrigins[propName]
+						originDesc := "base schema"
+						if originIdx >= 0 {
+							originDesc = fmt.Sprintf("allOf component %d", originIdx)
+						}
+						
+						// Build detailed error message
+						return nil, fmt.Errorf(
+							"conflicting definitions for property %q in allOf:\n"+
+								"  - %s defines it as type=%v, readOnly=%v, format=%q\n"+
+								"  - allOf component %d defines it as type=%v, readOnly=%v, format=%q\n"+
+								"Properties must have compatible schemas across allOf components",
+							propName,
+							originDesc, getSchemaType(existingRef.Value), existingRef.Value.ReadOnly, existingRef.Value.Format,
+							i, getSchemaType(propRef.Value), propRef.Value.ReadOnly, propRef.Value.Format,
+						)
+					}
+				}
+			} else {
+				result[propName] = propRef
+				propertyOrigins[propName] = i
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// GetEffectiveRequired returns the effective required fields list for a schema,
+// merging required arrays from allOf components if present (union semantics).
+func GetEffectiveRequired(schema *openapi3.Schema) ([]string, error) {
+	if schema == nil {
+		return nil, nil
+	}
+
+	// If no allOf, return the schema's required directly
+	if len(schema.AllOf) == 0 {
+		result := make([]string, len(schema.Required))
+		copy(result, schema.Required)
+		return result, nil
+	}
+
+	// Union required fields from all components
+	requiredSet := make(map[string]struct{})
+	
+	// Add base schema required fields
+	for _, req := range schema.Required {
+		requiredSet[req] = struct{}{}
+	}
+
+	// Add from each allOf component
+	for i, componentRef := range schema.AllOf {
+		if componentRef == nil || componentRef.Value == nil {
+			continue
+		}
+
+		// Recursively get effective required for the component
+		componentRequired, err := GetEffectiveRequired(componentRef.Value)
+		if err != nil {
+			return nil, fmt.Errorf("getting required from allOf component %d: %w", i, err)
+		}
+
+		for _, req := range componentRequired {
+			requiredSet[req] = struct{}{}
+		}
+	}
+
+	// Convert set to sorted slice
+	result := make([]string, 0, len(requiredSet))
+	for req := range requiredSet {
+		result = append(result, req)
+	}
+	sort.Strings(result)
+
+	return result, nil
+}
+
 // FlattenAllOf merges allOf components into a single effective schema for generation.
+// DEPRECATED: This function mutates the schema graph and is kept for compatibility.
+// Use GetEffectiveProperties and GetEffectiveRequired instead for new code.
 // It handles property merging, required field combination, and conflict detection.
 func FlattenAllOf(schema *openapi3.Schema) (*openapi3.Schema, error) {
 	if schema == nil {
@@ -17,10 +145,11 @@ func FlattenAllOf(schema *openapi3.Schema) (*openapi3.Schema, error) {
 
 	// Use a cache to avoid reprocessing the same schema and handle cycles
 	cache := make(map[*openapi3.Schema]*openapi3.Schema)
-	return flattenAllOfRecursive(schema, cache)
+	inProgress := make(map[*openapi3.Schema]struct{})
+	return flattenAllOfRecursive(schema, cache, inProgress)
 }
 
-func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*openapi3.Schema) (*openapi3.Schema, error) {
+func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*openapi3.Schema, inProgress map[*openapi3.Schema]struct{}) (*openapi3.Schema, error) {
 	if schema == nil {
 		return nil, nil
 	}
@@ -28,6 +157,11 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 	// Check cache first - if we've already processed this schema, return the cached result
 	if cached, ok := cache[schema]; ok {
 		return cached, nil
+	}
+
+	// Check for cycles in allOf chain
+	if _, active := inProgress[schema]; active {
+		return nil, fmt.Errorf("circular reference detected in allOf chain")
 	}
 
 	// For schemas without allOf, we still want to process nested properties once
@@ -41,10 +175,10 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 			for propName, propRef := range schema.Properties {
 				if propRef != nil && propRef.Value != nil {
 					// Skip if this property points back to a schema we're already processing
-					if _, inProgress := cache[propRef.Value]; inProgress && propRef.Value == schema {
+					if _, inProg := cache[propRef.Value]; inProg && propRef.Value == schema {
 						continue
 					}
-					flattened, err := flattenAllOfRecursive(propRef.Value, cache)
+					flattened, err := flattenAllOfRecursive(propRef.Value, cache, inProgress)
 					if err != nil {
 						return nil, fmt.Errorf("flattening property %s: %w", propName, err)
 					}
@@ -55,8 +189,8 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 
 		// Process array items
 		if schema.Items != nil && schema.Items.Value != nil {
-			if _, inProgress := cache[schema.Items.Value]; !inProgress || schema.Items.Value != schema {
-				flattened, err := flattenAllOfRecursive(schema.Items.Value, cache)
+			if _, inProg := cache[schema.Items.Value]; !inProg || schema.Items.Value != schema {
+				flattened, err := flattenAllOfRecursive(schema.Items.Value, cache, inProgress)
 				if err != nil {
 					return nil, fmt.Errorf("flattening array items: %w", err)
 				}
@@ -66,8 +200,8 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 
 		// Process additional properties
 		if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
-			if _, inProgress := cache[schema.AdditionalProperties.Schema.Value]; !inProgress || schema.AdditionalProperties.Schema.Value != schema {
-				flattened, err := flattenAllOfRecursive(schema.AdditionalProperties.Schema.Value, cache)
+			if _, inProg := cache[schema.AdditionalProperties.Schema.Value]; !inProg || schema.AdditionalProperties.Schema.Value != schema {
+				flattened, err := flattenAllOfRecursive(schema.AdditionalProperties.Schema.Value, cache, inProgress)
 				if err != nil {
 					return nil, fmt.Errorf("flattening additional properties: %w", err)
 				}
@@ -77,6 +211,10 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 
 		return schema, nil
 	}
+
+	// Mark as in-progress before processing allOf components
+	inProgress[schema] = struct{}{}
+	defer delete(inProgress, schema)
 
 	// Merge allOf components
 	merged := &openapi3.Schema{
@@ -170,7 +308,7 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 		}
 
 		// Recursively flatten the component
-		component, err := flattenAllOfRecursive(componentRef.Value, cache)
+		component, err := flattenAllOfRecursive(componentRef.Value, cache, inProgress)
 		if err != nil {
 			return nil, fmt.Errorf("flattening allOf component %d: %w", i, err)
 		}
@@ -186,14 +324,27 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 					// Check if schemas are equivalent
 					if !schemasEquivalent(existingRef.Value, propRef.Value) {
 						originSchema := propertyOrigins[propName]
+						originIdx := -1
+						for j, compRef := range schema.AllOf {
+							if compRef != nil && compRef.Value != nil && compRef.Value == originSchema {
+								originIdx = j
+								break
+							}
+						}
+						
+						originDesc := "base schema"
+						if originIdx >= 0 {
+							originDesc = fmt.Sprintf("allOf component %d", originIdx)
+						}
+						
 						return nil, fmt.Errorf(
-							"conflicting definitions for property %q in allOf: "+
-								"component %d defines it differently than previous definition. "+
-								"First defined in schema with type=%v, description=%q; "+
-								"conflicting definition has type=%v, description=%q",
-							propName, i,
-							getSchemaType(existingRef.Value), getDescription(originSchema, propName),
-							getSchemaType(propRef.Value), propRef.Value.Description,
+							"conflicting definitions for property %q in allOf:\n"+
+								"  - %s defines it as type=%v, readOnly=%v, format=%q\n"+
+								"  - allOf component %d defines it as type=%v, readOnly=%v, format=%q\n"+
+								"Properties must have compatible schemas across allOf components",
+							propName,
+							originDesc, getSchemaType(existingRef.Value), existingRef.Value.ReadOnly, existingRef.Value.Format,
+							i, getSchemaType(propRef.Value), propRef.Value.ReadOnly, propRef.Value.Format,
 						)
 					}
 				}
@@ -252,7 +403,7 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 	// Recursively process merged properties
 	for propName, propRef := range merged.Properties {
 		if propRef != nil && propRef.Value != nil {
-			flattened, err := flattenAllOfRecursive(propRef.Value, cache)
+			flattened, err := flattenAllOfRecursive(propRef.Value, cache, inProgress)
 			if err != nil {
 				return nil, fmt.Errorf("flattening merged property %s: %w", propName, err)
 			}
@@ -262,7 +413,7 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 
 	// Process array items if present
 	if merged.Items != nil && merged.Items.Value != nil {
-		flattened, err := flattenAllOfRecursive(merged.Items.Value, cache)
+		flattened, err := flattenAllOfRecursive(merged.Items.Value, cache, inProgress)
 		if err != nil {
 			return nil, fmt.Errorf("flattening merged array items: %w", err)
 		}
@@ -271,7 +422,7 @@ func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*
 
 	// Process additional properties if present
 	if merged.AdditionalProperties.Schema != nil && merged.AdditionalProperties.Schema.Value != nil {
-		flattened, err := flattenAllOfRecursive(merged.AdditionalProperties.Schema.Value, cache)
+		flattened, err := flattenAllOfRecursive(merged.AdditionalProperties.Schema.Value, cache, inProgress)
 		if err != nil {
 			return nil, fmt.Errorf("flattening merged additional properties: %w", err)
 		}

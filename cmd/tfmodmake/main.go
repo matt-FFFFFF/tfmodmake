@@ -64,12 +64,6 @@ func main() {
 		openapi.ApplyPropertyWritabilityOverrides(schema, resolver)
 	}
 
-	// Flatten allOf to merge properties, required fields, etc.
-	schema, err = openapi.FlattenAllOf(schema)
-	if err != nil {
-		log.Fatalf("Failed to flatten allOf: %v", err)
-	}
-
 	supportsTags := terraform.SupportsTags(schema)
 	supportsLocation := terraform.SupportsLocation(schema)
 

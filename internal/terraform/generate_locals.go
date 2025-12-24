@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
 )
 
 func generateLocals(schema *openapi3.Schema, localName string, secrets []secretField) error {
@@ -36,9 +37,16 @@ func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath h
 		return hclwrite.TokensForIdentifier("null")
 	}
 
+	// Get effective properties for allOf handling
+	effectiveProps, err := openapi.GetEffectiveProperties(schema)
+	if err != nil {
+		// Fall back to direct properties if we can't get effective ones
+		effectiveProps = schema.Properties
+	}
+
 	var attrs []hclwrite.ObjectAttrTokens
 	var keys []string
-	for k := range schema.Properties {
+	for k := range effectiveProps {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -46,7 +54,7 @@ func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath h
 	// Keep object construction simple; AzAPI can ignore null properties when
 	// ignore_null_property is enabled on the resource.
 	for _, k := range keys {
-		prop := schema.Properties[k]
+		prop := effectiveProps[k]
 		if prop == nil || prop.Value == nil {
 			continue
 		}
@@ -110,15 +118,22 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 			return accessPath // map(string) or free-form, passed as is
 		}
 
+		// Get effective properties for allOf handling
+		effectiveProps, err := openapi.GetEffectiveProperties(schema)
+		if err != nil {
+			// Fall back to direct properties if we can't get effective ones
+			effectiveProps = schema.Properties
+		}
+
 		var attrs []hclwrite.ObjectAttrTokens
 		var keys []string
-		for k := range schema.Properties {
+		for k := range effectiveProps {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
 		for _, k := range keys {
-			prop := schema.Properties[k]
+			prop := effectiveProps[k]
 			if prop == nil || prop.Value == nil {
 				continue
 			}
