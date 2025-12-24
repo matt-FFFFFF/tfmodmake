@@ -14,7 +14,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation bool, secrets []secretField) error {
+func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation bool, secrets []secretField, nameSchema *openapi3.Schema) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -107,7 +107,12 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 		return varBody, nil
 	}
 
-	appendVariable("name", "The name of the resource.", hclwrite.TokensForIdentifier("string"))
+	nameVarBody := appendVariable("name", "The name of the resource.", hclwrite.TokensForIdentifier("string"))
+	// The resource name constraints usually come from the operation path parameter schema (not the request body schema).
+	// When available, apply them as validations to var.name.
+	if nameSchema != nil {
+		generateValidations(nameVarBody, "name", nameSchema, true)
+	}
 	body.AppendNewline()
 
 	appendVariable("parent_id", "The parent resource ID for this resource.", hclwrite.TokensForIdentifier("string"))

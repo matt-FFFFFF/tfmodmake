@@ -87,7 +87,7 @@ func TestGenerate(t *testing.T) {
 	supportsLocation := SupportsLocation(schema)
 
 	apiVersion := "2024-01-01"
-	err = Generate(schema, "testResource", "test_local", apiVersion, supportsTags, supportsLocation)
+	err = Generate(schema, "testResource", "test_local", apiVersion, supportsTags, supportsLocation, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -99,7 +99,6 @@ func TestGenerate(t *testing.T) {
 	parentVar := requireBlock(t, varsBody, "variable", "parent_id")
 	assert.Equal(t, "The parent resource ID for this resource.\n", attributeStringValue(t, parentVar.Body.Attributes["description"]))
 	assert.Equal(t, "string", expressionString(t, parentVar.Body.Attributes["type"].Expr))
-
 	assert.Nil(t, findBlock(varsBody, "variable", "tags"))
 
 	locationVar := requireBlock(t, varsBody, "variable", "location")
@@ -141,6 +140,51 @@ func TestGenerate(t *testing.T) {
 	nameOutput := requireBlock(t, outputsBody, "output", "name")
 	assert.Equal(t, "The name of the created resource.", attributeStringValue(t, nameOutput.Body.Attributes["description"]))
 	assert.Equal(t, "azapi_resource.this.name", expressionString(t, nameOutput.Body.Attributes["value"].Expr))
+}
+
+func TestGenerate_NameVariable_UsesNameSchemaValidations(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+
+	maxLen := uint64(63)
+	nameSchema := &openapi3.Schema{
+		Type:      &openapi3.Types{"string"},
+		MinLength: 1,
+		MaxLength: &maxLen,
+		Pattern:   "^[a-z0-9-]{1,63}$",
+	}
+
+	err = Generate(nil, "testResource", "unused_local", "2024-01-01", false, false, nameSchema)
+	require.NoError(t, err)
+
+	varsBody := parseHCLBody(t, "variables.tf")
+	nameVar := requireBlock(t, varsBody, "variable", "name")
+
+	var validations []*hclsyntax.Block
+	for _, b := range nameVar.Body.Blocks {
+		if b.Type == "validation" {
+			validations = append(validations, b)
+		}
+	}
+	require.GreaterOrEqual(t, len(validations), 3)
+
+	var conditions []string
+	for _, b := range validations {
+		condAttr := b.Body.Attributes["condition"]
+		require.NotNil(t, condAttr)
+		conditions = append(conditions, expressionString(t, condAttr.Expr))
+	}
+	joined := strings.Join(conditions, "\n")
+
+	assert.Contains(t, joined, "length(var.name) >= 1")
+	assert.Contains(t, joined, "length(var.name) <= 63")
+	assert.Contains(t, joined, "can(regex(\"^[a-z0-9-]{1,63}$\", var.name))")
 }
 
 func TestGenerate_NestedObjectValidations(t *testing.T) {
@@ -191,7 +235,7 @@ func TestGenerate_NestedObjectValidations(t *testing.T) {
 	supportsTags := SupportsTags(schema)
 	supportsLocation := SupportsLocation(schema)
 
-	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", supportsTags, supportsLocation)
+	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", supportsTags, supportsLocation, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -257,7 +301,7 @@ func TestGenerate_QuotesNonIdentifierObjectKeysInLocals(t *testing.T) {
 	}
 
 	apiVersion := "2025-10-01"
-	err = Generate(schema, "Microsoft.ContainerService/managedClusters", "resource_body", apiVersion, false, false)
+	err = Generate(schema, "Microsoft.ContainerService/managedClusters", "resource_body", apiVersion, false, false, nil)
 	require.NoError(t, err)
 
 	localsBytes, err := os.ReadFile("locals.tf")
@@ -320,7 +364,7 @@ func TestGenerate_SkipsSecretsByFullPathNotLeafName(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false)
+	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil)
 	require.NoError(t, err)
 
 	localsBytes, err := os.ReadFile("locals.tf")
@@ -364,7 +408,7 @@ func TestGenerate_MainEnablesIgnoreNullProperty(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false)
+	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil)
 	require.NoError(t, err)
 
 	mainBytes, err := os.ReadFile("main.tf")
@@ -399,7 +443,7 @@ func TestGenerate_FailsOnFlattenedPropertiesNameCollision(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false)
+	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "collision")
 }
@@ -437,7 +481,7 @@ func TestGenerate_DoesNotDuplicateSecretVarsFromFlattenedProperties(t *testing.T
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false)
+	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -515,7 +559,7 @@ func TestGenerate_IncludesAdditionalPropertiesDescription(t *testing.T) {
 
 	supportsLocation := SupportsLocation(schema)
 
-	err = Generate(schema, "testResource", "local_map", "", false, supportsLocation)
+	err = Generate(schema, "testResource", "local_map", "", false, supportsLocation, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -556,7 +600,7 @@ func TestGenerate_WithTagsSupport(t *testing.T) {
 
 	supportsLocation := SupportsLocation(schema)
 
-	err = Generate(schema, "testResource", "resource_body", "", true, supportsLocation)
+	err = Generate(schema, "testResource", "resource_body", "", true, supportsLocation, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -594,7 +638,7 @@ func TestGenerate_UsesPlaceholderWhenVersionMissing(t *testing.T) {
 	supportsTags := SupportsTags(schema)
 	supportsLocation := SupportsLocation(schema)
 
-	err = Generate(schema, "testResource", "placeholder_local", "", supportsTags, supportsLocation)
+	err = Generate(schema, "testResource", "placeholder_local", "", supportsTags, supportsLocation, nil)
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")
@@ -612,7 +656,7 @@ func TestGenerate_WithNilSchemaSetsEmptyBody(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	err = Generate(nil, "testResource", "unused_local", "2024-01-01", false, false)
+	err = Generate(nil, "testResource", "unused_local", "2024-01-01", false, false, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -896,7 +940,7 @@ func TestGenerate_WithSecretFields(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", false, false)
+	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", false, false, nil)
 	require.NoError(t, err)
 
 	// Check variables.tf

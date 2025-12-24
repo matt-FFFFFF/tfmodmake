@@ -10,7 +10,7 @@ CLI tool to generate base Terraform configuration (`variables.tf` and `locals.tf
 *   Flattens the OpenAPI top-level `properties` bag into idiomatic top-level Terraform variables.
 *   Handles nested objects and arrays.
 *   **Generates comprehensive validation blocks from schema constraints:**
-    *   String validations: `minLength`, `maxLength`, `format` (UUID)
+    *   String validations: `minLength`, `maxLength`, `pattern`, `format` (UUID)
     *   Array validations: `minItems`, `maxItems`, `uniqueItems`
     *   Numeric validations: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`
     *   Enum validations: direct `enum`, `allOf`, Azure `x-ms-enum`
@@ -123,7 +123,7 @@ When using `-root properties`, `locals.tf` represents the `properties` object an
 
 The tool automatically generates Terraform validation blocks from OpenAPI schema constraints, helping catch invalid inputs early with clear error messages. Supported constraints include:
 
-- **String validations**: minLength, maxLength, format (UUID)
+- **String validations**: minLength, maxLength, pattern (regex), format (UUID)
 - **Array validations**: minItems, maxItems, uniqueItems
 - **Numeric validations**: minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf
 - **Enum validations**: Direct enum, allOf composition, Azure x-ms-enum extension

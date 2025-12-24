@@ -112,7 +112,7 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "Microsoft.Test/comprehensive", "resource_body", "2024-01-01", false, false)
+	err = Generate(schema, "Microsoft.Test/comprehensive", "resource_body", "2024-01-01", false, false, nil)
 	require.NoError(t, err)
 
 	// Read and verify the generated file

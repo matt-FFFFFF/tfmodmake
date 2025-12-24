@@ -56,6 +56,11 @@ func main() {
 		log.Fatalf("Failed to find resource: %v", err)
 	}
 
+	nameSchema, err := openapi.FindResourceNameSchema(doc, *resourceType)
+	if err != nil {
+		log.Fatalf("Failed to find resource name schema: %v", err)
+	}
+
 	// Some Azure specs illegally combine `$ref` with sibling metadata like `readOnly`.
 	// Many parsers drop those siblings when resolving refs, so we re-apply property
 	// writability from the raw spec JSON where possible.
@@ -83,7 +88,7 @@ func main() {
 		finalLocalName = naming.ToSnakeCase(finalLocalName)
 	}
 
-	if err := terraform.Generate(schema, *resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation); err != nil {
+	if err := terraform.Generate(schema, *resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, nameSchema); err != nil {
 		log.Fatalf("Failed to generate terraform files: %v", err)
 	}
 

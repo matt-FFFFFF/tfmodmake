@@ -156,6 +156,13 @@ func appendValidationsForExpr(varBody *hclwrite.Body, displayName string, parent
 		condition = wrapWithNullGuard(parentRef, condition)
 		appendValidation(varBody, condition, fmt.Sprintf("%s must be a valid UUID.", displayName))
 	}
+	if condition, ok := stringPatternConditionTokens(valueRef, schema); ok {
+		if !isRequired {
+			condition = wrapWithNullGuard(valueRef, condition)
+		}
+		condition = wrapWithNullGuard(parentRef, condition)
+		appendValidation(varBody, condition, fmt.Sprintf("%s must match the pattern: %s.", displayName, schema.Pattern))
+	}
 
 	// Arrays
 	if condition, ok := arrayMinItemsConditionTokens(valueRef, schema); ok {
@@ -336,6 +343,22 @@ func stringFormatConditionTokens(valueRef hclwrite.Tokens, schema *openapi3.Sche
 	return regexCall, true
 }
 
+func stringPatternConditionTokens(valueRef hclwrite.Tokens, schema *openapi3.Schema) (hclwrite.Tokens, bool) {
+	if schema == nil || schema.Type == nil || !slices.Contains(*schema.Type, "string") {
+		return nil, false
+	}
+	if schema.Pattern == "" {
+		return nil, false
+	}
+	regexCall := hclwrite.TokensForFunctionCall("can",
+		hclwrite.TokensForFunctionCall("regex",
+			hclwrite.TokensForValue(cty.StringVal(schema.Pattern)),
+			valueRef,
+		),
+	)
+	return regexCall, true
+}
+
 func arrayMinItemsConditionTokens(valueRef hclwrite.Tokens, schema *openapi3.Schema) (hclwrite.Tokens, bool) {
 	if schema == nil || schema.Type == nil || !slices.Contains(*schema.Type, "array") {
 		return nil, false
@@ -479,6 +502,7 @@ func resolveSchemaForValidation(schema *openapi3.Schema) *openapi3.Schema {
 		}
 		merged.MinLength = schema.MinLength
 		merged.MaxLength = schema.MaxLength
+		merged.Pattern = schema.Pattern
 		merged.Min = schema.Min
 		merged.Max = schema.Max
 		merged.ExclusiveMin = schema.ExclusiveMin
@@ -573,6 +597,9 @@ func resolveSchemaForValidation(schema *openapi3.Schema) *openapi3.Schema {
 				}
 				if s.Format != "" && merged.Format == "" {
 					merged.Format = s.Format
+				}
+				if s.Pattern != "" && merged.Pattern == "" {
+					merged.Pattern = s.Pattern
 				}
 				// Merge extensions (e.g., x-ms-enum)
 				if s.Extensions != nil {
@@ -684,6 +711,13 @@ func generateStringValidations(varBody *hclwrite.Body, tfName string, schema *op
 			condition = wrapWithNullGuard(varRef, condition)
 		}
 		appendValidation(varBody, condition, fmt.Sprintf("%s must be a valid UUID.", tfName))
+	}
+
+	if condition, ok := stringPatternConditionTokens(varRef, schema); ok {
+		if !isRequired {
+			condition = wrapWithNullGuard(varRef, condition)
+		}
+		appendValidation(varBody, condition, fmt.Sprintf("%s must match the pattern: %s.", tfName, schema.Pattern))
 	}
 }
 

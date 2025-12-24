@@ -4,7 +4,9 @@ package terraform
 import "github.com/getkin/kin-openapi/openapi3"
 
 // Generate generates variables.tf, locals.tf, main.tf, and outputs.tf based on the schema.
-func Generate(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool) error {
+//
+// The optional nameSchema parameter is used to attach validations to the top-level "name" variable.
+func Generate(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, nameSchema *openapi3.Schema) error {
 	hasSchema := schema != nil
 
 	// Collect secret fields from schema
@@ -16,7 +18,7 @@ func Generate(schema *openapi3.Schema, resourceType string, localName string, ap
 	if err := generateTerraform(); err != nil {
 		return err
 	}
-	if err := generateVariables(schema, supportsTags, supportsLocation, secrets); err != nil {
+	if err := generateVariables(schema, supportsTags, supportsLocation, secrets, nameSchema); err != nil {
 		return err
 	}
 	if hasSchema {

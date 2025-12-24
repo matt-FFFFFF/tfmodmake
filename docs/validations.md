@@ -67,6 +67,25 @@ validation {
 }
 ```
 
+#### pattern
+Validates string against a regular expression pattern.
+
+**OpenAPI:**
+```json
+{
+  "type": "string",
+  "pattern": "^[a-zA-Z0-9-_]{1,63}$"
+}
+```
+
+**Generated Terraform:**
+```hcl
+validation {
+  condition     = var.resource_name == null || can(regex("^[a-zA-Z0-9-_]{1,63}$", var.resource_name))
+  error_message = "resource_name must match the pattern: ^[a-zA-Z0-9-_]{1,63}$."
+}
+```
+
 ### 2. Array/List Validations
 
 #### minItems
@@ -324,15 +343,13 @@ Error messages are clear and actionable:
 
 ## Limitations
 
-1. **Pattern validation**: `pattern` (regex) constraints are not implemented to avoid overly restrictive validations that may not be compatible with Terraform's regex engine.
-
-2. **Nested property validations**: Only top-level variables receive validation blocks. Nested object properties within complex types do not get individual validations.
+1. **Nested property validations**: Only top-level variables receive validation blocks. Nested object properties within complex types do not get individual validations.
 
   Nested object validations are generated conservatively for object-typed variables: scalar fields and arrays of scalars may receive validations when they are represented as direct attributes on `var.<object>.<field>`. Deeply nested structures are not exhaustively validated.
 
-3. **Format validation**: Only UUID format is validated. Other formats (email, date-time, etc.) are not validated by default.
+2. **Format validation**: Only UUID format is validated. Other formats (email, date-time, etc.) are not validated by default.
 
-4. **Read-only properties**: Validations are not generated for read-only properties as they cannot be set by users.
+3. **Read-only properties**: Validations are not generated for read-only properties as they cannot be set by users.
 
 ## Examples
 
@@ -364,7 +381,6 @@ The validation generation feature is thoroughly tested:
 ## Future Enhancements
 
 Potential future improvements:
-1. Opt-in pattern validation for specific use cases
-2. Additional format validators (email, date-time, etc.)
-3. Nested property validations (with opt-in to control verbosity)
-4. Custom validation extensions via configuration
+1. Additional format validators (email, date-time, etc.)
+2. Nested property validations (with opt-in to control verbosity)
+3. Custom validation extensions via configuration

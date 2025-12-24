@@ -15,11 +15,23 @@ func LoadSpec(path string) (*openapi3.T, error) {
 	loader.IsExternalRefsAllowed = true
 
 	u, err := url.Parse(path)
+	var doc *openapi3.T
 	if err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		return loader.LoadFromURI(u)
+		doc, err = loader.LoadFromURI(u)
+	} else {
+		doc, err = loader.LoadFromFile(path)
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	return loader.LoadFromFile(path)
+	// Ensure all $ref pointers are resolved so downstream helpers can reliably access
+	// schemas/parameters even when specs use shared definitions.
+	if err := loader.ResolveRefsIn(doc, nil); err != nil {
+		return nil, fmt.Errorf("resolving refs: %w", err)
+	}
+
+	return doc, nil
 }
 
 // FindResource identifies the schema for the specified resource type.
@@ -38,87 +50,89 @@ func FindResource(doc *openapi3.T, resourceType string) (*openapi3.Schema, error
 		}
 	}
 
-	// Strategy: Look for a path that ends with the resource type (ignoring {name})
+	// Strategy: Prefer canonical ARM instance paths (ending in a {name} after the resource type).
 	// Azure paths usually look like: .../providers/Microsoft.ContainerService/managedClusters/{resourceName}
+	// Keep the previous substring heuristic as a fallback for non-standard specs.
 
 	var bestMatchSchema *openapi3.Schema
 
 	for path, pathItem := range doc.Paths.Map() {
-		// Check if path corresponds to the resource type
-		// We look for .../providers/<resourceType>/{name} or just .../<resourceType>
+		if pathItem == nil || pathItem.Put == nil {
+			continue
+		}
 
-		lowerPath := strings.ToLower(path)
-		lowerResourceType := strings.ToLower(searchType)
-		idx := strings.Index(lowerPath, lowerResourceType)
-
-		if idx != -1 {
-			// Ensure we matched a full path segment (start)
+		matched := false
+		if parsedType, _, ok := azureARMInstancePathInfo(path); ok {
+			matched = strings.EqualFold(parsedType, searchType)
+		} else {
+			lowerPath := strings.ToLower(path)
+			lowerResourceType := strings.ToLower(searchType)
+			idx := strings.Index(lowerPath, lowerResourceType)
+			if idx == -1 {
+				continue
+			}
+			// Ensure we matched a full path segment (start).
 			if idx > 0 && lowerPath[idx-1] != '/' {
 				continue
 			}
-
-			// Check suffix
 			suffix := lowerPath[idx+len(lowerResourceType):]
-
-			// Ensure we matched a full path segment (end)
+			// Ensure we matched a full path segment (end).
 			if suffix != "" && suffix[0] != '/' {
 				continue
 			}
-
-			// Check for child resources
-			// We allow at most one path segment after the resource type (the resource name)
-			// Suffix is either "" or "/{name}" or "/{name}/child..."
-
+			// Reject child resources (allow at most one segment after resource type).
 			segments := 0
 			if suffix != "" {
-				// Remove leading slash
 				trimmed := suffix[1:]
 				if trimmed != "" {
-					// Count segments
 					segments = strings.Count(trimmed, "/") + 1
 				}
 			}
-
 			if segments > 1 {
 				continue
 			}
+			matched = true
+		}
 
-			// We prefer the PUT operation for resource creation
-			if pathItem.Put != nil {
-				var schema *openapi3.Schema
+		if !matched {
+			continue
+		}
 
-				// Check RequestBody (OpenAPI 3)
-				if pathItem.Put.RequestBody != nil && pathItem.Put.RequestBody.Value != nil {
-					content := pathItem.Put.RequestBody.Value.Content
-					if jsonContent, ok := content["application/json"]; ok {
-						if jsonContent.Schema != nil {
-							schema = jsonContent.Schema.Value
-						}
-					}
-				}
+		var schema *openapi3.Schema
 
-				// Fallback for Swagger/OpenAPI v2 specs, which model request bodies as
-				// a body parameter instead of an OpenAPI v3 RequestBody.
-				// Azure REST API specs can still contain these in older/preview specs.
-				if schema == nil {
-					for _, paramRef := range pathItem.Put.Parameters {
-						if paramRef.Value != nil && paramRef.Value.In == "body" && paramRef.Value.Schema != nil {
-							schema = paramRef.Value.Schema.Value
-							break
-						}
-					}
-				}
-
-				if schema != nil {
-					bestMatchSchema = schema
-					// If we find a direct match, we might want to stop or keep looking for a better one?
-					// For now, let's take the first one that looks like a resource creation.
-					// Usually the path ending in /{resourceName} is the one.
-					if strings.HasSuffix(path, "}") { // ends with parameter
-						return bestMatchSchema, nil
-					}
+		// Check RequestBody (OpenAPI 3)
+		if pathItem.Put.RequestBody != nil && pathItem.Put.RequestBody.Value != nil {
+			content := pathItem.Put.RequestBody.Value.Content
+			if jsonContent, ok := content["application/json"]; ok {
+				if jsonContent.Schema != nil {
+					schema = jsonContent.Schema.Value
 				}
 			}
+		}
+
+		// Fallback for Swagger/OpenAPI v2 specs, which model request bodies as
+		// a body parameter instead of an OpenAPI v3 RequestBody.
+		// Azure REST API specs can still contain these in older/preview specs.
+		if schema == nil {
+			for _, paramRef := range pathItem.Put.Parameters {
+				if paramRef.Value != nil && paramRef.Value.In == "body" && paramRef.Value.Schema != nil {
+					schema = paramRef.Value.Schema.Value
+					break
+				}
+			}
+		}
+
+		if schema == nil {
+			continue
+		}
+
+		bestMatchSchema = schema
+		// Prefer instance paths ending in /{name} when present.
+		if _, _, ok := azureARMInstancePathInfo(path); ok {
+			return bestMatchSchema, nil
+		}
+		if strings.HasSuffix(path, "}") {
+			return bestMatchSchema, nil
 		}
 	}
 
@@ -149,6 +163,184 @@ func FindResource(doc *openapi3.T, resourceType string) (*openapi3.Schema, error
 	}
 
 	return nil, fmt.Errorf("resource type %s not found in spec", resourceType)
+}
+
+// FindResourceNameSchema identifies the schema for the resource name path parameter for the specified resource type.
+//
+// Azure specs typically express resource naming rules (pattern/minLength/maxLength) on the final path parameter of the PUT
+// operation, e.g. /providers/Microsoft.Foo/widgets/{widgetName}.
+//
+// If no suitable parameter schema can be found, it returns (nil, nil).
+func FindResourceNameSchema(doc *openapi3.T, resourceType string) (*openapi3.Schema, error) {
+	if doc == nil || doc.Paths == nil {
+		return nil, nil
+	}
+
+	// Normalize resource type for search (same rules as FindResource).
+	searchType := resourceType
+	if strings.HasSuffix(searchType, "}") {
+		if idx := strings.LastIndex(searchType, "/{"); idx != -1 {
+			searchType = searchType[:idx]
+		}
+	}
+
+	for path, pathItem := range doc.Paths.Map() {
+		if pathItem == nil || pathItem.Put == nil {
+			continue
+		}
+
+		parsedType, paramName, ok := azureARMInstancePathInfo(path)
+		if !ok {
+			continue
+		}
+		if !strings.EqualFold(parsedType, searchType) {
+			continue
+		}
+
+		// Prefer operation-level parameters over path-level ones.
+		if schema := findPathParameterSchema(pathItem.Put.Parameters, paramName); schema != nil {
+			return normalizeStringSchemaForValidation(schema), nil
+		}
+		if schema := findPathParameterSchema(pathItem.Parameters, paramName); schema != nil {
+			return normalizeStringSchemaForValidation(schema), nil
+		}
+	}
+
+	return nil, nil
+}
+
+func findPathParameterSchema(params openapi3.Parameters, name string) *openapi3.Schema {
+	for _, paramRef := range params {
+		if paramRef == nil || paramRef.Value == nil {
+			continue
+		}
+		p := paramRef.Value
+		if p.In != "path" {
+			continue
+		}
+		if !strings.EqualFold(p.Name, name) {
+			continue
+		}
+
+		// OpenAPI 3 parameters should have Schema, but many Azure specs are Swagger/OpenAPI 2.0
+		// and express constraints (type/pattern/minLength/maxLength) at the parameter level.
+		// kin-openapi preserves unknown fields under Extensions in that case.
+		if p.Schema != nil && p.Schema.Value != nil {
+			return p.Schema.Value
+		}
+		if schema := schemaFromParameterExtensions(p); schema != nil {
+			return schema
+		}
+	}
+	return nil
+}
+
+func schemaFromParameterExtensions(p *openapi3.Parameter) *openapi3.Schema {
+	if p == nil {
+		return nil
+	}
+	if p.Extensions == nil {
+		return nil
+	}
+
+	getString := func(key string) (string, bool) {
+		v, ok := p.Extensions[key]
+		if !ok || v == nil {
+			return "", false
+		}
+		s, ok := v.(string)
+		return s, ok
+	}
+	getUint64 := func(key string) (*uint64, bool) {
+		v, ok := p.Extensions[key]
+		if !ok || v == nil {
+			return nil, false
+		}
+		switch n := v.(type) {
+		case float64:
+			if n < 0 {
+				return nil, false
+			}
+			u := uint64(n)
+			return &u, true
+		case int:
+			if n < 0 {
+				return nil, false
+			}
+			u := uint64(n)
+			return &u, true
+		case int64:
+			if n < 0 {
+				return nil, false
+			}
+			u := uint64(n)
+			return &u, true
+		case uint64:
+			u := n
+			return &u, true
+		default:
+			return nil, false
+		}
+	}
+
+	typ, ok := getString("type")
+	if !ok || typ != "string" {
+		return nil
+	}
+
+	schema := &openapi3.Schema{Type: &openapi3.Types{"string"}}
+
+	if pattern, ok := getString("pattern"); ok {
+		schema.Pattern = pattern
+	}
+	if format, ok := getString("format"); ok {
+		schema.Format = format
+	}
+	if min, ok := getUint64("minLength"); ok {
+		schema.MinLength = *min
+	}
+	if max, ok := getUint64("maxLength"); ok {
+		schema.MaxLength = max
+	}
+
+	// If no constraints were found, treat as absent.
+	if schema.Pattern == "" && schema.MinLength == 0 && schema.MaxLength == nil && schema.Format == "" {
+		return nil
+	}
+
+	return schema
+}
+
+// normalizeStringSchemaForValidation returns a schema suitable for string validation generation.
+// Some Azure specs omit explicit "type: string" on parameters, but still provide string constraints.
+func normalizeStringSchemaForValidation(schema *openapi3.Schema) *openapi3.Schema {
+	if schema == nil {
+		return nil
+	}
+
+	// If the schema is explicitly not a string, skip it.
+	if schema.Type != nil {
+		isString := false
+		for _, t := range *schema.Type {
+			if t == "string" {
+				isString = true
+				break
+			}
+		}
+		if !isString {
+			return nil
+		}
+	}
+
+	// Copy only the fields we currently use for validation generation.
+	copy := &openapi3.Schema{
+		Type:      &openapi3.Types{"string"},
+		Format:    schema.Format,
+		Pattern:   schema.Pattern,
+		MinLength: schema.MinLength,
+		MaxLength: schema.MaxLength,
+	}
+	return copy
 }
 
 // NavigateSchema traverses the schema properties based on the dot-separated path.

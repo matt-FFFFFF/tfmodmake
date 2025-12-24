@@ -1,15 +1,15 @@
 .PHONY: build
 build:
-	go build ./cmd/tfmodmake
+	TMPDIR=/tmp GOTMPDIR=/tmp go build ./cmd/tfmodmake
 
 .PHONY: install
 install:
-	go install ./cmd/tfmodmake
+	TMPDIR=/tmp GOTMPDIR=/tmp go install ./cmd/tfmodmake
 
 .PHONY: test
 test:
-	go test -count=1 ./...
+	TMPDIR=/tmp GOTMPDIR=/tmp go test -count=1 ./...
 
 .PHONY: test-examples
 test-examples:
-	bash ./scripts/test_examples.sh
+	TMPDIR=/tmp bash ./scripts/test_examples.sh

@@ -74,6 +74,123 @@ func TestFindResource(t *testing.T) {
 	}
 }
 
+func TestFindResourceNameSchema(t *testing.T) {
+	t.Parallel()
+
+	maxLen := uint64(63)
+	doc := &openapi3.T{Paths: &openapi3.Paths{}}
+
+	pathItem := &openapi3.PathItem{
+		Put: &openapi3.Operation{
+			Parameters: openapi3.Parameters{
+				&openapi3.ParameterRef{Value: &openapi3.Parameter{
+					Name: "resourceName",
+					In:   "path",
+					Schema: &openapi3.SchemaRef{Value: &openapi3.Schema{
+						Type:      &openapi3.Types{"string"},
+						Pattern:   "^[a-z0-9-]+$",
+						MinLength: 1,
+						MaxLength: &maxLen,
+					}},
+				}},
+			},
+		},
+	}
+
+	doc.Paths.Set("/providers/Microsoft.ContainerService/managedClusters/{resourceName}", pathItem)
+
+	schema, err := FindResourceNameSchema(doc, "Microsoft.ContainerService/managedClusters")
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+	require.NotNil(t, schema.Type)
+	assert.Contains(t, *schema.Type, "string")
+	assert.Equal(t, "^[a-z0-9-]+$", schema.Pattern)
+	assert.Equal(t, uint64(1), schema.MinLength)
+	require.NotNil(t, schema.MaxLength)
+	assert.Equal(t, maxLen, *schema.MaxLength)
+}
+
+func TestFindResourceNameSchema_SwaggerV2ParameterExtensions(t *testing.T) {
+	t.Parallel()
+
+	doc := &openapi3.T{Paths: &openapi3.Paths{}}
+
+	pathItem := &openapi3.PathItem{
+		Put: &openapi3.Operation{
+			Parameters: openapi3.Parameters{
+				&openapi3.ParameterRef{Value: &openapi3.Parameter{
+					Name: "resourceName",
+					In:   "path",
+					// Swagger/OpenAPI v2-style parameter constraints are preserved by kin-openapi
+					// under Extensions when no parameter schema exists.
+					Extensions: map[string]interface{}{
+						"type":      "string",
+						"pattern":   "^[a-z0-9-]+$",
+						"minLength": float64(1),
+						"maxLength": float64(63),
+					},
+				}},
+			},
+		},
+	}
+
+	doc.Paths.Set("/providers/Microsoft.ContainerService/managedClusters/{resourceName}", pathItem)
+
+	schema, err := FindResourceNameSchema(doc, "Microsoft.ContainerService/managedClusters")
+	require.NoError(t, err)
+	require.NotNil(t, schema)
+
+	require.NotNil(t, schema.Type)
+	assert.Contains(t, *schema.Type, "string")
+	assert.Equal(t, "^[a-z0-9-]+$", schema.Pattern)
+	assert.Equal(t, uint64(1), schema.MinLength)
+	require.NotNil(t, schema.MaxLength)
+	assert.Equal(t, uint64(63), *schema.MaxLength)
+}
+
+func TestAzureARMInstancePathInfo(t *testing.T) {
+	t.Parallel()
+
+	t.Run("top-level instance path", func(t *testing.T) {
+		t.Parallel()
+
+		resourceType, nameParam, ok := azureARMInstancePathInfo("/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/widgets/{widgetName}")
+		require.True(t, ok)
+		assert.Equal(t, "Microsoft.Test/widgets", resourceType)
+		assert.Equal(t, "widgetName", nameParam)
+	})
+
+	t.Run("nested instance path", func(t *testing.T) {
+		t.Parallel()
+
+		resourceType, nameParam, ok := azureARMInstancePathInfo("/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/widgets/{widgetName}/child/{childName}")
+		require.True(t, ok)
+		assert.Equal(t, "Microsoft.Test/widgets/child", resourceType)
+		assert.Equal(t, "childName", nameParam)
+	})
+
+	t.Run("collection path rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, ok := azureARMInstancePathInfo("/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/widgets")
+		assert.False(t, ok)
+	})
+
+	t.Run("parameterized provider rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, ok := azureARMInstancePathInfo("/providers/{providerNamespace}/widgets/{widgetName}")
+		assert.False(t, ok)
+	})
+
+	t.Run("parameterized type rejected", func(t *testing.T) {
+		t.Parallel()
+
+		_, _, ok := azureARMInstancePathInfo("/providers/Microsoft.Test/{typeName}/{widgetName}")
+		assert.False(t, ok)
+	})
+}
+
 func TestNavigateSchema(t *testing.T) {
 	rootSchema := &openapi3.Schema{
 		Type: &openapi3.Types{"object"},
