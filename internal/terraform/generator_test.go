@@ -968,3 +968,250 @@ func TestGenerate_WithSecretFields(t *testing.T) {
 	assert.Contains(t, sensitiveBodyVersionExpr, "var.connection_string_version")
 	assert.Contains(t, sensitiveBodyVersionExpr, "var.api_key_version")
 }
+
+func TestGenerate_ResponseExportValues(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+
+	schema := &openapi3.Schema{
+		Type: &openapi3.Types{"object"},
+		Properties: map[string]*openapi3.SchemaRef{
+			"location": {
+				Value: &openapi3.Schema{
+					Type:        &openapi3.Types{"string"},
+					Description: "Resource location",
+				},
+			},
+			"properties": {
+				Value: &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"defaultDomain": {
+							Value: &openapi3.Schema{
+								Type:        &openapi3.Types{"string"},
+								ReadOnly:    true,
+								Description: "Default domain",
+							},
+						},
+						"staticIp": {
+							Value: &openapi3.Schema{
+								Type:        &openapi3.Types{"string"},
+								ReadOnly:    true,
+								Description: "Static IP",
+							},
+						},
+						"provisioningState": {
+							Value: &openapi3.Schema{
+								Type:        &openapi3.Types{"string"},
+								ReadOnly:    true,
+								Description: "Provisioning state",
+							},
+						},
+						"writableField": {
+							Value: &openapi3.Schema{
+								Type:        &openapi3.Types{"string"},
+								Description: "Writable field",
+							},
+						},
+					},
+				},
+			},
+			"identity": {
+				Value: &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"principalId": {
+							Value: &openapi3.Schema{
+								Type:        &openapi3.Types{"string"},
+								ReadOnly:    true,
+								Description: "Principal ID",
+							},
+						},
+						"tenantId": {
+							Value: &openapi3.Schema{
+								Type:        &openapi3.Types{"string"},
+								ReadOnly:    true,
+								Description: "Tenant ID",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	apiVersion := "2024-01-01"
+	err = Generate(schema, "Microsoft.App/managedEnvironments", "resource_body", apiVersion, false, true)
+	require.NoError(t, err)
+
+	mainBody := parseHCLBody(t, "main.tf")
+	resourceBlock := requireBlock(t, mainBody, "resource", "azapi_resource", "this")
+
+	// Check that response_export_values is populated
+	responseExportAttr := resourceBlock.Body.Attributes["response_export_values"]
+	require.NotNil(t, responseExportAttr, "response_export_values attribute should exist")
+
+	exprStr := expressionString(t, responseExportAttr.Expr)
+
+	// Should contain the readOnly fields
+	assert.Contains(t, exprStr, "properties.defaultDomain")
+	assert.Contains(t, exprStr, "properties.staticIp")
+	assert.Contains(t, exprStr, "properties.provisioningState")
+	assert.Contains(t, exprStr, "identity.principalId")
+	assert.Contains(t, exprStr, "identity.tenantId")
+
+	// Should NOT contain writable fields
+	assert.NotContains(t, exprStr, "writableField")
+	assert.NotContains(t, exprStr, "location")
+
+	// Read the full main.tf to check for the comment
+	mainBytes, err := os.ReadFile("main.tf")
+	require.NoError(t, err)
+	mainContent := string(mainBytes)
+
+	// Check for the comment about trimming
+	assert.Contains(t, mainContent, "Trim response_export_values")
+}
+
+func TestGenerate_ResponseExportValuesWithBlocklist(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+
+	schema := &openapi3.Schema{
+		Type: &openapi3.Types{"object"},
+		Properties: map[string]*openapi3.SchemaRef{
+			"properties": {
+				Value: &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"goodField": {
+							Value: &openapi3.Schema{
+								Type:     &openapi3.Types{"string"},
+								ReadOnly: true,
+							},
+						},
+						"eTag": {
+							Value: &openapi3.Schema{
+								Type:     &openapi3.Types{"string"},
+								ReadOnly: true,
+							},
+						},
+						"createdAt": {
+							Value: &openapi3.Schema{
+								Type:     &openapi3.Types{"string"},
+								ReadOnly: true,
+							},
+						},
+						"status": {
+							Value: &openapi3.Schema{
+								Type: &openapi3.Types{"object"},
+								Properties: map[string]*openapi3.SchemaRef{
+									"phase": {
+										Value: &openapi3.Schema{
+											Type:     &openapi3.Types{"string"},
+											ReadOnly: true,
+										},
+									},
+								},
+							},
+						},
+						"provisioningError": {
+							Value: &openapi3.Schema{
+								Type: &openapi3.Types{"object"},
+								Properties: map[string]*openapi3.SchemaRef{
+									"code": {
+										Value: &openapi3.Schema{
+											Type:     &openapi3.Types{"string"},
+											ReadOnly: true,
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false)
+	require.NoError(t, err)
+
+	mainBody := parseHCLBody(t, "main.tf")
+	resourceBlock := requireBlock(t, mainBody, "resource", "azapi_resource", "this")
+
+	responseExportAttr := resourceBlock.Body.Attributes["response_export_values"]
+	require.NotNil(t, responseExportAttr)
+
+	exprStr := expressionString(t, responseExportAttr.Expr)
+
+	// Should contain the good field
+	assert.Contains(t, exprStr, "properties.goodField")
+
+	// Should NOT contain blocklisted fields
+	assert.NotContains(t, exprStr, "eTag")
+	assert.NotContains(t, exprStr, "createdAt")
+	assert.NotContains(t, exprStr, "status.phase")
+	assert.NotContains(t, exprStr, "provisioningError")
+}
+
+func TestGenerate_ResponseExportValuesEmptyWhenNoReadOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+
+	schema := &openapi3.Schema{
+		Type: &openapi3.Types{"object"},
+		Properties: map[string]*openapi3.SchemaRef{
+			"properties": {
+				Value: &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"writableField": {
+							Value: &openapi3.Schema{
+								Type: &openapi3.Types{"string"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false)
+	require.NoError(t, err)
+
+	mainBody := parseHCLBody(t, "main.tf")
+	resourceBlock := requireBlock(t, mainBody, "resource", "azapi_resource", "this")
+
+	responseExportAttr := resourceBlock.Body.Attributes["response_export_values"]
+	require.NotNil(t, responseExportAttr)
+
+	exprStr := strings.TrimSpace(expressionString(t, responseExportAttr.Expr))
+
+	// Should be an empty list
+	assert.Equal(t, "[]", exprStr)
+
+	// Should NOT have the comment about trimming
+	mainBytes, err := os.ReadFile("main.tf")
+	require.NoError(t, err)
+	mainContent := string(mainBytes)
+	assert.NotContains(t, mainContent, "Trim response_export_values")
+}
