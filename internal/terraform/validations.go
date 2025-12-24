@@ -37,22 +37,27 @@ func generateValidations(varBody *hclwrite.Body, tfName string, propSchema *open
 	generateNumericValidations(varBody, tfName, resolvedSchema, isRequired)
 }
 
-func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objSchema *openapi3.Schema) {
+func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objSchema *openapi3.Schema) error {
 	if objSchema == nil || objSchema.Type == nil {
-		return
+		return nil
 	}
 	if !slices.Contains(*objSchema.Type, "object") {
-		return
+		return nil
 	}
-	
-	// Get effective properties and required for allOf handling
+
+	// Nested validations are conservative, but allOf effective-shape errors (cycles/conflicts)
+	// indicate structural schema problems and should fail generation loudly.
 	effectiveProps, err := openapi.GetEffectiveProperties(objSchema)
-	if err != nil || len(effectiveProps) == 0 {
-		return
+	if err != nil {
+		return fmt.Errorf("getting effective properties for nested validations (%s): %w", tfName, err)
 	}
+	if len(effectiveProps) == 0 {
+		return nil
+	}
+
 	effectiveRequired, err := openapi.GetEffectiveRequired(objSchema)
 	if err != nil {
-		effectiveRequired = objSchema.Required
+		return fmt.Errorf("getting effective required for nested validations (%s): %w", tfName, err)
 	}
 
 	parentRef := hclgen.TokensForTraversal("var", tfName)
@@ -98,6 +103,8 @@ func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objS
 
 		appendValidationsForExpr(varBody, displayName, parentRef, childRef, childSchema, childRequired)
 	}
+
+	return nil
 }
 
 func isScalarOrScalarArraySchema(schema *openapi3.Schema) bool {

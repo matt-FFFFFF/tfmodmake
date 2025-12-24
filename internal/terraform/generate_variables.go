@@ -99,7 +99,9 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 		// Generate validations for this variable
 		generateValidations(varBody, tfName, propSchema, isRequired)
 		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propSchema.Properties) > 0 {
-			generateNestedObjectValidations(varBody, tfName, propSchema)
+			if err := generateNestedObjectValidations(varBody, tfName, propSchema); err != nil {
+				return nil, err
+			}
 		}
 
 		return varBody, nil
