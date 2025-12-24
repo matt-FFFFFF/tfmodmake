@@ -245,7 +245,7 @@ Enum validations are generated for properties with restricted value sets.
 ```hcl
 validation {
   condition     = var.tier == null || contains(["Basic", "Free", "Premium"], var.tier)
-  error_message = "tier must be one of: [\"Basic\"], \"Free\", \"Premium\"."
+  error_message = "tier must be one of: [\"Basic\", \"Free\", \"Premium\"]."
 }
 ```
 
@@ -264,7 +264,7 @@ validation {
 ```hcl
 validation {
   condition     = var.status == null || contains(["Disabled", "Enabled"], var.status)
-  error_message = "status must be one of: [\"Disabled\"], \"Enabled\"."
+  error_message = "status must be one of: [\"Disabled\", \"Enabled\"]."
 }
 ```
 
@@ -287,7 +287,7 @@ validation {
 ```hcl
 validation {
   condition     = var.sku == null || contains(["Basic", "Free"], var.sku)
-  error_message = "sku must be one of: [\"Basic\"], \"Free\"."
+  error_message = "sku must be one of: [\"Basic\", \"Free\"]."
 }
 ```
 
@@ -328,6 +328,8 @@ Error messages are clear and actionable:
 
 2. **Nested property validations**: Only top-level variables receive validation blocks. Nested object properties within complex types do not get individual validations.
 
+  Nested object validations are generated conservatively for object-typed variables: scalar fields and arrays of scalars may receive validations when they are represented as direct attributes on `var.<object>.<field>`. Deeply nested structures are not exhaustively validated.
+
 3. **Format validation**: Only UUID format is validated. Other formats (email, date-time, etc.) are not validated by default.
 
 4. **Read-only properties**: Validations are not generated for read-only properties as they cannot be set by users.
@@ -354,7 +356,7 @@ validation {
 ## Testing
 
 The validation generation feature is thoroughly tested:
-- 15 unit tests covering all constraint types
+- 16 unit tests covering all constraint types
 - Integration tests with comprehensive scenarios
 - Real-world spec testing with Azure resources
 - All existing tests continue to pass (no regressions)

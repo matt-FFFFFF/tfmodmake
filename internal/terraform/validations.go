@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -102,7 +103,7 @@ func isScalarOrScalarArraySchema(schema *openapi3.Schema) bool {
 		return false
 	}
 	if schema.Items == nil || schema.Items.Value == nil || schema.Items.Value.Type == nil {
-		return true
+		return false
 	}
 	itemTypes := *schema.Items.Value.Type
 	return slices.Contains(itemTypes, "string") || slices.Contains(itemTypes, "integer") || slices.Contains(itemTypes, "number") || slices.Contains(itemTypes, "boolean")
@@ -134,8 +135,9 @@ func appendValidationsForExpr(varBody *hclwrite.Body, displayName string, parent
 		appendValidation(varBody, condition, fmt.Sprintf("%s must have a maximum length of %d.", displayName, *schema.MaxLength))
 	}
 	if condition, ok := stringFormatConditionTokens(valueRef, schema); ok {
-		// Format validations are always null-safe.
-		condition = wrapWithNullGuard(valueRef, condition)
+		if !isRequired {
+			condition = wrapWithNullGuard(valueRef, condition)
+		}
 		condition = wrapWithNullGuard(parentRef, condition)
 		appendValidation(varBody, condition, fmt.Sprintf("%s must be a valid UUID.", displayName))
 	}
@@ -560,28 +562,42 @@ func joinEnumValues(values []string) string {
 	const maxLength = 200
 	const maxCount = 10
 
+	if len(values) == 0 {
+		return "[]"
+	}
+
+	quoted := make([]string, 0, len(values))
+	for _, v := range values {
+		quoted = append(quoted, fmt.Sprintf("%q", v))
+	}
+
 	if len(values) <= maxCount {
-		joined := fmt.Sprintf("[%s]", fmt.Sprintf("%q", values[0]))
-		for i := 1; i < len(values); i++ {
-			joined = fmt.Sprintf("%s, %q", joined, values[i])
-		}
+		joined := fmt.Sprintf("[%s]", strings.Join(quoted, ", "))
 		if len(joined) <= maxLength {
 			return joined
 		}
 	}
 
 	// Too many or too long, show first few and count
-	joined := fmt.Sprintf("%q", values[0])
-	count := 1
-	for i := 1; i < len(values) && i < maxCount && len(joined) < maxLength; i++ {
-		joined = fmt.Sprintf("%s, %q", joined, values[i])
-		count = i + 1
+	out := "["
+	count := 0
+	for i := 0; i < len(quoted) && i < maxCount; i++ {
+		part := quoted[i]
+		if count > 0 {
+			part = ", " + part
+		}
+		// +1 for the closing bracket
+		if len(out)+len(part)+1 > maxLength {
+			break
+		}
+		out += part
+		count++
 	}
-
+	out += "]"
 	if count < len(values) {
-		return fmt.Sprintf("%s (and %d more)", joined, len(values)-count)
+		return fmt.Sprintf("%s (and %d more)", out, len(values)-count)
 	}
-	return joined
+	return out
 }
 
 // generateStringValidations generates validation for string constraints.
@@ -611,7 +627,9 @@ func generateStringValidations(varBody *hclwrite.Body, tfName string, schema *op
 	}
 
 	if condition, ok := stringFormatConditionTokens(varRef, schema); ok {
-		condition = wrapWithNullGuard(varRef, condition)
+		if !isRequired {
+			condition = wrapWithNullGuard(varRef, condition)
+		}
 		appendValidation(varBody, condition, fmt.Sprintf("%s must be a valid UUID.", tfName))
 	}
 }
