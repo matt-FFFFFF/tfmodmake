@@ -15,29 +15,36 @@ func FlattenAllOf(schema *openapi3.Schema) (*openapi3.Schema, error) {
 		return nil, nil
 	}
 
-	visited := make(map[*openapi3.Schema]struct{})
-	return flattenAllOfRecursive(schema, visited)
+	// Use a cache to avoid reprocessing the same schema and handle cycles
+	cache := make(map[*openapi3.Schema]*openapi3.Schema)
+	return flattenAllOfRecursive(schema, cache)
 }
 
-func flattenAllOfRecursive(schema *openapi3.Schema, visited map[*openapi3.Schema]struct{}) (*openapi3.Schema, error) {
+func flattenAllOfRecursive(schema *openapi3.Schema, cache map[*openapi3.Schema]*openapi3.Schema) (*openapi3.Schema, error) {
 	if schema == nil {
 		return nil, nil
 	}
 
-	// Detect cycles
-	if _, seen := visited[schema]; seen {
-		return nil, fmt.Errorf("circular reference detected in allOf chain")
+	// Check cache first - if we've already processed this schema, return the cached result
+	if cached, ok := cache[schema]; ok {
+		return cached, nil
 	}
-	visited[schema] = struct{}{}
-	defer delete(visited, schema)
 
-	// If no allOf, recursively process properties and return
+	// For schemas without allOf, we still want to process nested properties once
+	// but we need to handle recursion. We'll mark the schema as "in progress" by
+	// caching it as itself first
 	if len(schema.AllOf) == 0 {
+		cache[schema] = schema // Mark as being processed
+
 		// Process nested properties
 		if schema.Properties != nil {
 			for propName, propRef := range schema.Properties {
 				if propRef != nil && propRef.Value != nil {
-					flattened, err := flattenAllOfRecursive(propRef.Value, visited)
+					// Skip if this property points back to a schema we're already processing
+					if _, inProgress := cache[propRef.Value]; inProgress && propRef.Value == schema {
+						continue
+					}
+					flattened, err := flattenAllOfRecursive(propRef.Value, cache)
 					if err != nil {
 						return nil, fmt.Errorf("flattening property %s: %w", propName, err)
 					}
@@ -48,20 +55,24 @@ func flattenAllOfRecursive(schema *openapi3.Schema, visited map[*openapi3.Schema
 
 		// Process array items
 		if schema.Items != nil && schema.Items.Value != nil {
-			flattened, err := flattenAllOfRecursive(schema.Items.Value, visited)
-			if err != nil {
-				return nil, fmt.Errorf("flattening array items: %w", err)
+			if _, inProgress := cache[schema.Items.Value]; !inProgress || schema.Items.Value != schema {
+				flattened, err := flattenAllOfRecursive(schema.Items.Value, cache)
+				if err != nil {
+					return nil, fmt.Errorf("flattening array items: %w", err)
+				}
+				schema.Items.Value = flattened
 			}
-			schema.Items.Value = flattened
 		}
 
 		// Process additional properties
 		if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
-			flattened, err := flattenAllOfRecursive(schema.AdditionalProperties.Schema.Value, visited)
-			if err != nil {
-				return nil, fmt.Errorf("flattening additional properties: %w", err)
+			if _, inProgress := cache[schema.AdditionalProperties.Schema.Value]; !inProgress || schema.AdditionalProperties.Schema.Value != schema {
+				flattened, err := flattenAllOfRecursive(schema.AdditionalProperties.Schema.Value, cache)
+				if err != nil {
+					return nil, fmt.Errorf("flattening additional properties: %w", err)
+				}
+				schema.AdditionalProperties.Schema.Value = flattened
 			}
-			schema.AdditionalProperties.Schema.Value = flattened
 		}
 
 		return schema, nil
@@ -158,8 +169,8 @@ func flattenAllOfRecursive(schema *openapi3.Schema, visited map[*openapi3.Schema
 			continue
 		}
 
-		// Recursively flatten the component first
-		component, err := flattenAllOfRecursive(componentRef.Value, visited)
+		// Recursively flatten the component
+		component, err := flattenAllOfRecursive(componentRef.Value, cache)
 		if err != nil {
 			return nil, fmt.Errorf("flattening allOf component %d: %w", i, err)
 		}
@@ -235,10 +246,13 @@ func flattenAllOfRecursive(schema *openapi3.Schema, visited map[*openapi3.Schema
 	// Sort required for consistency
 	sort.Strings(merged.Required)
 
+	// Cache the merged result before processing nested properties
+	cache[schema] = merged
+
 	// Recursively process merged properties
 	for propName, propRef := range merged.Properties {
 		if propRef != nil && propRef.Value != nil {
-			flattened, err := flattenAllOfRecursive(propRef.Value, visited)
+			flattened, err := flattenAllOfRecursive(propRef.Value, cache)
 			if err != nil {
 				return nil, fmt.Errorf("flattening merged property %s: %w", propName, err)
 			}
@@ -248,7 +262,7 @@ func flattenAllOfRecursive(schema *openapi3.Schema, visited map[*openapi3.Schema
 
 	// Process array items if present
 	if merged.Items != nil && merged.Items.Value != nil {
-		flattened, err := flattenAllOfRecursive(merged.Items.Value, visited)
+		flattened, err := flattenAllOfRecursive(merged.Items.Value, cache)
 		if err != nil {
 			return nil, fmt.Errorf("flattening merged array items: %w", err)
 		}
@@ -257,7 +271,7 @@ func flattenAllOfRecursive(schema *openapi3.Schema, visited map[*openapi3.Schema
 
 	// Process additional properties if present
 	if merged.AdditionalProperties.Schema != nil && merged.AdditionalProperties.Schema.Value != nil {
-		flattened, err := flattenAllOfRecursive(merged.AdditionalProperties.Schema.Value, visited)
+		flattened, err := flattenAllOfRecursive(merged.AdditionalProperties.Schema.Value, cache)
 		if err != nil {
 			return nil, fmt.Errorf("flattening merged additional properties: %w", err)
 		}

@@ -354,22 +354,32 @@ func TestFlattenAllOf_NilSchema(t *testing.T) {
 func TestFlattenAllOf_CycleDetection(t *testing.T) {
 	t.Parallel()
 
-	// Create a cycle by having a schema reference itself
-	schema := &openapi3.Schema{
+	// Create a self-referential schema (error details containing error details)
+	// This is valid in OpenAPI and should be handled gracefully
+	errorDetails := &openapi3.Schema{
 		Type: &openapi3.Types{"object"},
 		Properties: map[string]*openapi3.SchemaRef{
-			"self": {Value: nil}, // Will be set to create cycle
+			"code":    {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
+			"message": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
+			"details": {Value: nil}, // Will point to array of errorDetails
 		},
 	}
 
-	// Create cycle
-	schema.Properties["self"].Value = schema
+	// Create the self-referential array
+	errorDetails.Properties["details"].Value = &openapi3.Schema{
+		Type: &openapi3.Types{"array"},
+		Items: &openapi3.SchemaRef{
+			Value: errorDetails, // Points back to itself
+		},
+	}
 
-	flattened, err := FlattenAllOf(schema)
-	// Should detect the cycle and return an error
-	assert.Error(t, err)
-	assert.Nil(t, flattened)
-	assert.Contains(t, err.Error(), "circular reference")
+	flattened, err := FlattenAllOf(errorDetails)
+	// Should handle the cycle gracefully via caching
+	assert.NoError(t, err)
+	assert.NotNil(t, flattened)
+	assert.Contains(t, flattened.Properties, "code")
+	assert.Contains(t, flattened.Properties, "message")
+	assert.Contains(t, flattened.Properties, "details")
 }
 
 func TestFlattenAllOf_ArrayItemsWithAllOf(t *testing.T) {
