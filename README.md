@@ -20,6 +20,10 @@ CLI tool to generate base Terraform configuration (`variables.tf` and `locals.tf
 *   Customizable local variable naming.
 *   Generates scaffolded `main.tf` and `outputs.tf` for an `azapi_resource`.
 *   Includes base variables for `name`, `parent_id`, and conditional `tags` (when the resource supports tags).
+*   **Generates `response_export_values` from readOnly fields in the schema:**
+    *   Automatically extracts computed/readOnly scalar properties (string, number, boolean, integer)
+    *   Applies filtering to remove noisy fields (array indices, `.status.`, `.provisioningError.`, `eTag`, timestamps)
+    *   Provides a useful starting point that module authors can trim to their needs
 *   Generates map-based module blocks for submodules using `addsub` command.
 
 ## Installation

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
 	"github.com/zclconf/go-cty/cty"
@@ -84,7 +85,23 @@ func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName s
 		resourceBody.SetAttributeRaw("tags", hclgen.TokensForTraversal("var", "tags"))
 	}
 
-	resourceBody.SetAttributeValue("response_export_values", cty.ListValEmpty(cty.String))
+	// Generate response_export_values from readOnly fields in the schema
+	exportPaths := extractReadOnlyPaths(schema)
+	if len(exportPaths) > 0 {
+		exportValues := make([]cty.Value, len(exportPaths))
+		for i, path := range exportPaths {
+			exportValues[i] = cty.StringVal(path)
+		}
+		resourceBody.SetAttributeValue("response_export_values", cty.ListVal(exportValues))
+
+		// Add a reminder comment after the resource block.
+		// This placement makes it stand out to users who should customize the exports.
+		body.AppendUnstructuredTokens(hclwrite.Tokens{
+			{Type: hclsyntax.TokenComment, Bytes: []byte("\n# Trim response_export_values to only the computed fields you need.\n")},
+		})
+	} else {
+		resourceBody.SetAttributeValue("response_export_values", cty.ListValEmpty(cty.String))
+	}
 
 	return hclgen.WriteFile("main.tf", file)
 }

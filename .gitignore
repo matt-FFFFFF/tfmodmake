@@ -44,3 +44,4 @@ go.work.sum
 
 # Generated Terraform files from testing
 /*.tf
+/internal/**/*.tf
