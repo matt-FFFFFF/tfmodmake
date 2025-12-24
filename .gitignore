@@ -41,3 +41,6 @@ go.work.sum
 **/crash.log
 **/crash.*.log
 **/examples/
+
+# Generated Terraform files from testing
+/*.tf

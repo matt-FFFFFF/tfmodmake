@@ -95,33 +95,10 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 			varBody.SetAttributeValue("ephemeral", cty.True)
 		}
 
-		if len(propSchema.Enum) > 0 {
-			var enumValuesRaw []string
-			var enumTokens []hclwrite.Tokens
-			for _, v := range propSchema.Enum {
-				enumValuesRaw = append(enumValuesRaw, fmt.Sprintf("%v", v))
-				enumTokens = append(enumTokens, hclwrite.TokensForValue(cty.StringVal(fmt.Sprintf("%v", v))))
-			}
-
-			varRef := hclgen.TokensForTraversal("var", tfName)
-			enumList := hclwrite.TokensForTuple(enumTokens)
-			containsCall := hclwrite.TokensForFunctionCall("contains", enumList, varRef)
-
-			var condition hclwrite.Tokens
-			if !isRequired {
-				condition = append(condition, varRef...)
-				condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenEqualOp, Bytes: []byte(" == ")})
-				condition = append(condition, hclwrite.TokensForIdentifier("null")...)
-				condition = append(condition, &hclwrite.Token{Type: hclsyntax.TokenOr, Bytes: []byte(" || ")})
-				condition = append(condition, containsCall...)
-			} else {
-				condition = containsCall
-			}
-
-			validation := varBody.AppendNewBlock("validation", nil)
-			validationBody := validation.Body()
-			validationBody.SetAttributeRaw("condition", condition)
-			validationBody.SetAttributeValue("error_message", cty.StringVal(fmt.Sprintf("%s must be one of: %s.", tfName, strings.Join(enumValuesRaw, ", "))))
+		// Generate validations for this variable
+		generateValidations(varBody, tfName, propSchema, isRequired)
+		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propSchema.Properties) > 0 {
+			generateNestedObjectValidations(varBody, tfName, propSchema)
 		}
 
 		return varBody, nil

@@ -9,7 +9,12 @@ CLI tool to generate base Terraform configuration (`variables.tf` and `locals.tf
 *   Generates Terraform variables with appropriate types and descriptions.
 *   Flattens the OpenAPI top-level `properties` bag into idiomatic top-level Terraform variables.
 *   Handles nested objects and arrays.
-*   Generates validation blocks for top-level enum variables.
+*   **Generates comprehensive validation blocks from schema constraints:**
+    *   String validations: `minLength`, `maxLength`, `format` (UUID)
+    *   Array validations: `minItems`, `maxItems`, `uniqueItems`
+    *   Numeric validations: `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`
+    *   Enum validations: direct `enum`, `allOf`, Azure `x-ms-enum`
+    *   All validations are null-safe for optional fields
 *   Creates a `locals.tf` file to map Terraform variables back to the API JSON structure.
 *   Supports targeting a specific root object (e.g., `properties`) to exclude unwanted fields.
 *   Customizable local variable naming.
@@ -109,3 +114,14 @@ The tool generates four files in the current directory:
 When generating the full resource schema (no `-root`), the OpenAPI top-level `properties` object is flattened so its children become top-level Terraform variables (for example `app_logs_configuration`, `custom_domain_configuration`, etc.), and `locals.tf` reconstructs the JSON `properties` object from those variables.
 
 When using `-root properties`, `locals.tf` represents the `properties` object and `main.tf` wraps it under `body.properties`.
+
+## Validation Blocks
+
+The tool automatically generates Terraform validation blocks from OpenAPI schema constraints, helping catch invalid inputs early with clear error messages. Supported constraints include:
+
+- **String validations**: minLength, maxLength, format (UUID)
+- **Array validations**: minItems, maxItems, uniqueItems
+- **Numeric validations**: minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf
+- **Enum validations**: Direct enum, allOf composition, Azure x-ms-enum extension
+
+All validations are null-safe for optional fields. See [docs/validations.md](docs/validations.md) for detailed documentation and examples.

@@ -143,6 +143,83 @@ func TestGenerate(t *testing.T) {
 	assert.Equal(t, "azapi_resource.this.name", expressionString(t, nameOutput.Body.Attributes["value"].Expr))
 }
 
+func TestGenerate_NestedObjectValidations(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+
+	maxUsernameLength := uint64(20)
+	schema := &openapi3.Schema{
+		Type: &openapi3.Types{"object"},
+		Properties: map[string]*openapi3.SchemaRef{
+			"properties": {
+				Value: &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"windowsProfile": {
+							Value: &openapi3.Schema{
+								Type:     &openapi3.Types{"object"},
+								Required: []string{"adminUsername"},
+								Properties: map[string]*openapi3.SchemaRef{
+									"adminUsername": {
+										Value: &openapi3.Schema{
+											Type:      &openapi3.Types{"string"},
+											MinLength: 1,
+											MaxLength: &maxUsernameLength,
+										},
+									},
+									"licenseType": {
+										Value: &openapi3.Schema{
+											Type: &openapi3.Types{"string"},
+											Enum: []any{"None", "Windows_Server"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	supportsTags := SupportsTags(schema)
+	supportsLocation := SupportsLocation(schema)
+
+	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", supportsTags, supportsLocation)
+	require.NoError(t, err)
+
+	varsBody := parseHCLBody(t, "variables.tf")
+	winVar := requireBlock(t, varsBody, "variable", "windows_profile")
+
+	var validations []*hclsyntax.Block
+	for _, b := range winVar.Body.Blocks {
+		if b.Type == "validation" {
+			validations = append(validations, b)
+		}
+	}
+	require.GreaterOrEqual(t, len(validations), 2)
+
+	var conditions []string
+	for _, b := range validations {
+		condAttr := b.Body.Attributes["condition"]
+		require.NotNil(t, condAttr)
+		conditions = append(conditions, expressionString(t, condAttr.Expr))
+	}
+	joined := strings.Join(conditions, "\n")
+
+	assert.Contains(t, joined, "var.windows_profile == null")
+	assert.Contains(t, joined, "var.windows_profile.admin_username")
+	assert.Contains(t, joined, "length(var.windows_profile.admin_username) <= 20")
+	assert.Contains(t, joined, "var.windows_profile.license_type")
+	assert.Contains(t, joined, "contains(")
+}
+
 func TestGenerate_QuotesNonIdentifierObjectKeysInLocals(t *testing.T) {
 	tmpDir := t.TempDir()
 
