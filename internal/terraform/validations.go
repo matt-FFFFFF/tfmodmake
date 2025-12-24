@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -36,15 +37,27 @@ func generateValidations(varBody *hclwrite.Body, tfName string, propSchema *open
 	generateNumericValidations(varBody, tfName, resolvedSchema, isRequired)
 }
 
-func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objSchema *openapi3.Schema) {
+func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objSchema *openapi3.Schema) error {
 	if objSchema == nil || objSchema.Type == nil {
-		return
+		return nil
 	}
 	if !slices.Contains(*objSchema.Type, "object") {
-		return
+		return nil
 	}
-	if len(objSchema.Properties) == 0 {
-		return
+
+	// Nested validations are conservative, but allOf effective-shape errors (cycles/conflicts)
+	// indicate structural schema problems and should fail generation loudly.
+	effectiveProps, err := openapi.GetEffectiveProperties(objSchema)
+	if err != nil {
+		return fmt.Errorf("getting effective properties for nested validations (%s): %w", tfName, err)
+	}
+	if len(effectiveProps) == 0 {
+		return nil
+	}
+
+	effectiveRequired, err := openapi.GetEffectiveRequired(objSchema)
+	if err != nil {
+		return fmt.Errorf("getting effective required for nested validations (%s): %w", tfName, err)
 	}
 
 	parentRef := hclgen.TokensForTraversal("var", tfName)
@@ -54,7 +67,7 @@ func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objS
 		snake    string
 	}
 	var keys []keyPair
-	for k := range objSchema.Properties {
+	for k := range effectiveProps {
 		snake := toSnakeCase(k)
 		if snake == "" {
 			continue
@@ -66,7 +79,7 @@ func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objS
 	})
 
 	for _, kp := range keys {
-		prop := objSchema.Properties[kp.original]
+		prop := effectiveProps[kp.original]
 		if prop == nil || prop.Value == nil {
 			continue
 		}
@@ -86,10 +99,12 @@ func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objS
 
 		childRef := hclgen.TokensForTraversal("var", tfName, kp.snake)
 		displayName := fmt.Sprintf("%s.%s", tfName, kp.snake)
-		childRequired := slices.Contains(objSchema.Required, kp.original)
+		childRequired := slices.Contains(effectiveRequired, kp.original)
 
 		appendValidationsForExpr(varBody, displayName, parentRef, childRef, childSchema, childRequired)
 	}
+
+	return nil
 }
 
 func isScalarOrScalarArraySchema(schema *openapi3.Schema) bool {

@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -98,7 +99,9 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 		// Generate validations for this variable
 		generateValidations(varBody, tfName, propSchema, isRequired)
 		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propSchema.Properties) > 0 {
-			generateNestedObjectValidations(varBody, tfName, propSchema)
+			if err := generateNestedObjectValidations(varBody, tfName, propSchema); err != nil {
+				return nil, err
+			}
 		}
 
 		return varBody, nil
@@ -134,16 +137,29 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 		seenNames["tags"] = struct{}{}
 	}
 
+	// Get effective properties and required (handling allOf)
 	var keys []string
+	var effectiveProps map[string]*openapi3.SchemaRef
+	var effectiveRequired []string
 	if schema != nil {
-		for k := range schema.Properties {
+		var err error
+		effectiveProps, err = openapi.GetEffectiveProperties(schema)
+		if err != nil {
+			return fmt.Errorf("getting effective properties: %w", err)
+		}
+		effectiveRequired, err = openapi.GetEffectiveRequired(schema)
+		if err != nil {
+			return fmt.Errorf("getting effective required: %w", err)
+		}
+		
+		for k := range effectiveProps {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 	}
 
 	for i, name := range keys {
-		prop := schema.Properties[name]
+		prop := effectiveProps[name]
 		if prop == nil || prop.Value == nil {
 			continue
 		}
@@ -161,15 +177,24 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 
 		// Flatten the top-level "properties" bag into individual variables.
 		if name == "properties" {
-			if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propSchema.Properties) > 0 {
+			propEffectiveProps, err := openapi.GetEffectiveProperties(propSchema)
+			if err != nil {
+				return fmt.Errorf("getting effective properties for 'properties': %w", err)
+			}
+			propEffectiveRequired, err := openapi.GetEffectiveRequired(propSchema)
+			if err != nil {
+				return fmt.Errorf("getting effective required for 'properties': %w", err)
+			}
+			
+			if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propEffectiveProps) > 0 {
 				var childKeys []string
-				for ck := range propSchema.Properties {
+				for ck := range propEffectiveProps {
 					childKeys = append(childKeys, ck)
 				}
 				sort.Strings(childKeys)
 
 				for _, ck := range childKeys {
-					childRef := propSchema.Properties[ck]
+					childRef := propEffectiveProps[ck]
 					if childRef == nil || childRef.Value == nil {
 						continue
 					}
@@ -186,7 +211,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 					}
 					seenNames[tfName] = struct{}{}
 
-					if _, err := appendSchemaVariable(tfName, ck, childSchema, propSchema.Required); err != nil {
+					if _, err := appendSchemaVariable(tfName, ck, childSchema, propEffectiveRequired); err != nil {
 						return err
 					}
 					body.AppendNewline()
@@ -204,7 +229,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation b
 			return fmt.Errorf("terraform variable name collision: %q (from %s)", tfName, name)
 		}
 		seenNames[tfName] = struct{}{}
-		if _, err := appendSchemaVariable(tfName, name, propSchema, schema.Required); err != nil {
+		if _, err := appendSchemaVariable(tfName, name, propSchema, effectiveRequired); err != nil {
 			return err
 		}
 
@@ -312,7 +337,18 @@ func mapType(schema *openapi3.Schema) hclwrite.Tokens {
 		return hclwrite.TokensForFunctionCall("list", elemType)
 	}
 	if slices.Contains(types, "object") {
-		if len(schema.Properties) == 0 {
+		// Get effective properties and required for allOf handling
+		effectiveProps, err := openapi.GetEffectiveProperties(schema)
+		if err != nil {
+			// Errors indicate cycles or conflicts which should fail generation
+			panic(fmt.Sprintf("failed to get effective properties: %v", err))
+		}
+		effectiveRequired, err := openapi.GetEffectiveRequired(schema)
+		if err != nil {
+			panic(fmt.Sprintf("failed to get effective required: %v", err))
+		}
+		
+		if len(effectiveProps) == 0 {
 			if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
 				valueType := mapType(schema.AdditionalProperties.Schema.Value)
 				return hclwrite.TokensForFunctionCall("map", valueType)
@@ -323,13 +359,13 @@ func mapType(schema *openapi3.Schema) hclwrite.Tokens {
 
 		// Sort properties
 		var keys []string
-		for k := range schema.Properties {
+		for k := range effectiveProps {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
 		for _, k := range keys {
-			prop := schema.Properties[k]
+			prop := effectiveProps[k]
 			if prop == nil || prop.Value == nil {
 				continue
 			}
@@ -340,7 +376,7 @@ func mapType(schema *openapi3.Schema) hclwrite.Tokens {
 
 			// Check if optional
 			isOptional := true
-			if slices.Contains(schema.Required, k) {
+			if slices.Contains(effectiveRequired, k) {
 				isOptional = false
 			}
 
@@ -361,12 +397,19 @@ func mapType(schema *openapi3.Schema) hclwrite.Tokens {
 func buildNestedDescription(schema *openapi3.Schema, indent string) string {
 	var sb strings.Builder
 
+	// Get effective properties for allOf handling
+	effectiveProps, err := openapi.GetEffectiveProperties(schema)
+	if err != nil {
+		// Errors indicate cycles or conflicts which should fail generation
+		panic(fmt.Sprintf("failed to get effective properties in buildNestedDescription: %v", err))
+	}
+
 	type keyPair struct {
 		original string
 		snake    string
 	}
 	var childKeys []keyPair
-	for k := range schema.Properties {
+	for k := range effectiveProps {
 		childKeys = append(childKeys, keyPair{original: k, snake: toSnakeCase(k)})
 	}
 	sort.Slice(childKeys, func(i, j int) bool {
@@ -375,7 +418,7 @@ func buildNestedDescription(schema *openapi3.Schema, indent string) string {
 
 	for _, pair := range childKeys {
 		k := pair.original
-		childProp := schema.Properties[k]
+		childProp := effectiveProps[k]
 		if childProp == nil || childProp.Value == nil {
 			continue
 		}
@@ -399,7 +442,13 @@ func buildNestedDescription(schema *openapi3.Schema, indent string) string {
 				isNested = true
 			}
 		}
-		if isNested && len(val.Properties) > 0 {
+		
+		// Check if nested object has properties (considering allOf)
+		nestedProps, err := openapi.GetEffectiveProperties(val)
+		if err != nil {
+			panic(fmt.Sprintf("failed to get effective properties for nested object: %v", err))
+		}
+		if isNested && len(nestedProps) > 0 {
 			sb.WriteString(buildNestedDescription(val, indent+"  "))
 		}
 	}

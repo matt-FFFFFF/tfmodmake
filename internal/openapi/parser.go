@@ -97,7 +97,9 @@ func FindResource(doc *openapi3.T, resourceType string) (*openapi3.Schema, error
 					}
 				}
 
-				// Check Parameters (Swagger 2.0 compatibility)
+				// Fallback for Swagger/OpenAPI v2 specs, which model request bodies as
+				// a body parameter instead of an OpenAPI v3 RequestBody.
+				// Azure REST API specs can still contain these in older/preview specs.
 				if schema == nil {
 					for _, paramRef := range pathItem.Put.Parameters {
 						if paramRef.Value != nil && paramRef.Value.In == "body" && paramRef.Value.Schema != nil {
