@@ -33,13 +33,16 @@ func FormatChildrenAsMarkdown(result *ChildrenResult) string {
 	if len(deployable) == 0 {
 		sb.WriteString("*No deployable child resources found.*\n\n")
 	} else {
-		sb.WriteString("| Resource Type | Operations | API Version | Example Path |\n")
-		sb.WriteString("|--------------|------------|-------------|-------------|\n")
+		sb.WriteString("| Resource Type | Operations | API Version | Example Path(s) |\n")
+		sb.WriteString("|--------------|------------|-------------|----------------|\n")
 		for _, child := range deployable {
 			ops := strings.Join(child.Operations, ", ")
 			examplePath := ""
 			if len(child.ExamplePaths) > 0 {
 				examplePath = child.ExamplePaths[0]
+				if len(child.ExamplePaths) > 1 {
+					examplePath += fmt.Sprintf(" (+%d more)", len(child.ExamplePaths)-1)
+				}
 			}
 			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n",
 				child.ResourceType, ops, child.APIVersion, examplePath))
@@ -51,12 +54,19 @@ func FormatChildrenAsMarkdown(result *ChildrenResult) string {
 	if len(filteredOut) == 0 {
 		sb.WriteString("*No resources were filtered out.*\n\n")
 	} else {
-		sb.WriteString("| Resource Type | Reason | Operations | API Version |\n")
-		sb.WriteString("|--------------|--------|------------|-------------|\n")
+		sb.WriteString("| Resource Type | Reason | Operations | API Version | Example Path(s) |\n")
+		sb.WriteString("|--------------|--------|------------|-------------|----------------|\n")
 		for _, child := range filteredOut {
 			ops := strings.Join(child.Operations, ", ")
-			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n",
-				child.ResourceType, child.DeployabilityReason, ops, child.APIVersion))
+			examplePath := ""
+			if len(child.ExamplePaths) > 0 {
+				examplePath = child.ExamplePaths[0]
+				if len(child.ExamplePaths) > 1 {
+					examplePath += fmt.Sprintf(" (+%d more)", len(child.ExamplePaths)-1)
+				}
+			}
+			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n",
+				child.ResourceType, child.DeployabilityReason, ops, child.APIVersion, examplePath))
 		}
 		sb.WriteString("\n")
 	}

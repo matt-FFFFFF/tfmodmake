@@ -75,6 +75,34 @@ func TestFormatChildrenAsMarkdown(t *testing.T) {
 
 		assert.Less(t, certPos, storagePos, "certificates should appear before storages in sorted output")
 	})
+
+	t.Run("shows multiple paths with count", func(t *testing.T) {
+		result := &ChildrenResult{
+			Deployable: []ChildResource{
+				{
+					ResourceType: "Microsoft.App/managedEnvironments/certificates",
+					Operations:   []string{"PUT"},
+					APIVersion:   "2024-01-01",
+					ExamplePaths: []string{"/path1", "/path2", "/path3"},
+					IsDeployable: true,
+				},
+			},
+			FilteredOut: []ChildResource{
+				{
+					ResourceType:        "Microsoft.App/managedEnvironments/status",
+					Operations:          []string{"GET"},
+					APIVersion:          "2024-01-01",
+					ExamplePaths:        []string{"/statusPath1", "/statusPath2"},
+					DeployabilityReason: "GET-only resource",
+				},
+			},
+		}
+
+		markdown := FormatChildrenAsMarkdown(result)
+
+		assert.Contains(t, markdown, "/path1 (+2 more)", "should show first path with count for deployable")
+		assert.Contains(t, markdown, "/statusPath1 (+1 more)", "should show first path with count for filtered out")
+	})
 }
 
 func TestFormatChildrenAsJSON(t *testing.T) {

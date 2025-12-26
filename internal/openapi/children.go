@@ -2,6 +2,7 @@ package openapi
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -61,10 +62,7 @@ func DiscoverChildren(opts DiscoverChildrenOptions) (*ChildrenResult, error) {
 			return nil, fmt.Errorf("failed to load spec %s: %w", specPath, err)
 		}
 
-		apiVersion := ""
-		if doc.Info != nil {
-			apiVersion = doc.Info.Version
-		}
+		apiVersion := extractAPIVersion(doc, specPath)
 
 		// Discover children in this spec
 		if err := discoverChildrenInSpec(doc, parentType, opts.Depth, apiVersion, childrenMap); err != nil {
@@ -87,6 +85,54 @@ func DiscoverChildren(opts DiscoverChildrenOptions) (*ChildrenResult, error) {
 	}
 
 	return result, nil
+}
+
+// extractAPIVersion extracts the API version from the OpenAPI document with fallback strategies.
+// 1. Try doc.Info.Version (most common in Azure specs)
+// 2. Try to extract from spec path/URL (e.g., .../2024-01-01/... or .../stable/2024-01-01/...)
+// 3. Try to find api-version parameter default value
+// 4. Return empty string if none found
+func extractAPIVersion(doc *openapi3.T, specPath string) string {
+	// Strategy 1: Use doc.Info.Version if available
+	if doc != nil && doc.Info != nil && doc.Info.Version != "" {
+		return doc.Info.Version
+	}
+
+	// Strategy 2: Extract from spec path/URL
+	// Azure specs typically have paths like: .../stable/2024-01-01/... or .../preview/2024-01-01-preview/...
+	// Pattern: YYYY-MM-DD or YYYY-MM-DD-preview
+	apiVersionPattern := `(\d{4}-\d{2}-\d{2}(?:-preview)?)`
+	if matches := regexp.MustCompile(apiVersionPattern).FindStringSubmatch(specPath); len(matches) > 1 {
+		return matches[1]
+	}
+
+	// Strategy 3: Look for api-version parameter default in paths
+	if doc != nil && doc.Paths != nil {
+		for _, pathItem := range doc.Paths.Map() {
+			if pathItem == nil {
+				continue
+			}
+			// Check operation parameters
+			for _, op := range []*openapi3.Operation{pathItem.Get, pathItem.Put, pathItem.Post, pathItem.Patch, pathItem.Delete} {
+				if op == nil {
+					continue
+				}
+				for _, paramRef := range op.Parameters {
+					if paramRef.Value != nil && paramRef.Value.Name == "api-version" {
+						if paramRef.Value.Schema != nil && paramRef.Value.Schema.Value != nil {
+							if def := paramRef.Value.Schema.Value.Default; def != nil {
+								if ver, ok := def.(string); ok && ver != "" {
+									return ver
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return ""
 }
 
 func discoverChildrenInSpec(doc *openapi3.T, parentType string, depth int, apiVersion string, childrenMap map[string]*ChildResource) error {
@@ -197,25 +243,44 @@ func isChildOf(childType, parentType string, maxDepth int) bool {
 }
 
 // hasRequestBodySchema checks if an operation has a request body with a schema.
+// It handles both OpenAPI 3 RequestBody and Swagger/OpenAPI v2 body parameters,
+// including $ref schemas and various JSON content types.
 func hasRequestBodySchema(op *openapi3.Operation) bool {
 	if op == nil {
 		return false
 	}
 
 	// Check OpenAPI 3 RequestBody
-	if op.RequestBody != nil && op.RequestBody.Value != nil {
-		content := op.RequestBody.Value.Content
-		if jsonContent, ok := content["application/json"]; ok {
-			if jsonContent.Schema != nil && jsonContent.Schema.Value != nil {
-				return true
+	if op.RequestBody != nil {
+		// Handle both direct Value and $ref
+		if op.RequestBody.Ref != "" || op.RequestBody.Value != nil {
+			if op.RequestBody.Value != nil {
+				// Check all content types, not just "application/json"
+				// Azure specs use various JSON media types: application/json, application/merge-patch+json, etc.
+				for _, mediaType := range op.RequestBody.Value.Content {
+					if mediaType.Schema != nil {
+						// Accept both $ref and direct schema
+						if mediaType.Schema.Ref != "" || mediaType.Schema.Value != nil {
+							return true
+						}
+					}
+				}
 			}
 		}
 	}
 
 	// Check Swagger/OpenAPI v2 body parameter
 	for _, paramRef := range op.Parameters {
-		if paramRef.Value != nil && paramRef.Value.In == "body" && paramRef.Value.Schema != nil {
-			return true
+		// Handle both $ref and direct parameter
+		if paramRef.Ref != "" || (paramRef.Value != nil && paramRef.Value.In == "body") {
+			if paramRef.Value != nil && paramRef.Value.In == "body" {
+				if paramRef.Value.Schema != nil {
+					// Accept both $ref and direct schema
+					if paramRef.Value.Schema.Ref != "" || paramRef.Value.Schema.Value != nil {
+						return true
+					}
+				}
+			}
 		}
 	}
 

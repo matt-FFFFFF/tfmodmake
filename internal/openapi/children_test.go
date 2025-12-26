@@ -122,6 +122,126 @@ func TestHasRequestBodySchema(t *testing.T) {
 
 		assert.False(t, hasRequestBodySchema(nil))
 	})
+
+	t.Run("OpenAPI 3 RequestBody with $ref schema", func(t *testing.T) {
+		t.Parallel()
+
+		op := &openapi3.Operation{
+			RequestBody: &openapi3.RequestBodyRef{
+				Value: &openapi3.RequestBody{
+					Content: openapi3.Content{
+						"application/json": &openapi3.MediaType{
+							Schema: &openapi3.SchemaRef{
+								Ref: "#/components/schemas/SomeSchema",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, hasRequestBodySchema(op), "should detect $ref schema")
+	})
+
+	t.Run("OpenAPI 3 with merge-patch+json content type", func(t *testing.T) {
+		t.Parallel()
+
+		op := &openapi3.Operation{
+			RequestBody: &openapi3.RequestBodyRef{
+				Value: &openapi3.RequestBody{
+					Content: openapi3.Content{
+						"application/merge-patch+json": &openapi3.MediaType{
+							Schema: &openapi3.SchemaRef{
+								Value: &openapi3.Schema{
+									Type: &openapi3.Types{"object"},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, hasRequestBodySchema(op), "should detect merge-patch+json content type")
+	})
+
+	t.Run("Swagger v2 body parameter with $ref", func(t *testing.T) {
+		t.Parallel()
+
+		op := &openapi3.Operation{
+			Parameters: openapi3.Parameters{
+				&openapi3.ParameterRef{
+					Value: &openapi3.Parameter{
+						In: "body",
+						Schema: &openapi3.SchemaRef{
+							Ref: "#/definitions/SomeDefinition",
+						},
+					},
+				},
+			},
+		}
+
+		assert.True(t, hasRequestBodySchema(op), "should detect $ref in Swagger v2 body parameter")
+	})
+}
+
+func TestExtractAPIVersion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("from doc.Info.Version", func(t *testing.T) {
+		t.Parallel()
+
+		doc := &openapi3.T{
+			Info: &openapi3.Info{
+				Version: "2024-01-01",
+			},
+		}
+
+		version := extractAPIVersion(doc, "some/path/spec.json")
+		assert.Equal(t, "2024-01-01", version)
+	})
+
+	t.Run("from spec path - stable version", func(t *testing.T) {
+		t.Parallel()
+
+		doc := &openapi3.T{}
+		path := "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/stable/2024-03-01/ManagedEnvironments.json"
+
+		version := extractAPIVersion(doc, path)
+		assert.Equal(t, "2024-03-01", version)
+	})
+
+	t.Run("from spec path - preview version", func(t *testing.T) {
+		t.Parallel()
+
+		doc := &openapi3.T{}
+		path := "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/preview/2025-10-02-preview/ManagedEnvironments.json"
+
+		version := extractAPIVersion(doc, path)
+		assert.Equal(t, "2025-10-02-preview", version)
+	})
+
+	t.Run("fallback to empty string", func(t *testing.T) {
+		t.Parallel()
+
+		doc := &openapi3.T{}
+		version := extractAPIVersion(doc, "some/unknown/path.json")
+		assert.Equal(t, "", version)
+	})
+
+	t.Run("prefers doc.Info.Version over path", func(t *testing.T) {
+		t.Parallel()
+
+		doc := &openapi3.T{
+			Info: &openapi3.Info{
+				Version: "2024-05-01",
+			},
+		}
+		path := "https://example.com/2024-01-01/spec.json"
+
+		version := extractAPIVersion(doc, path)
+		assert.Equal(t, "2024-05-01", version, "should prefer doc.Info.Version")
+	})
 }
 
 func TestDiscoverChildrenInSpec(t *testing.T) {
