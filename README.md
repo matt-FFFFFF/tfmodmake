@@ -25,6 +25,11 @@ CLI tool to generate base Terraform configuration (`variables.tf` and `locals.tf
     *   Applies filtering to remove noisy fields (array indices, `.status.`, `.provisioningError.`, `eTag`, timestamps)
     *   Provides a useful starting point that module authors can trim to their needs
 *   Generates map-based module blocks for submodules using `addsub` command.
+*   **Discovers deployable child resources from OpenAPI specs using `children` command:**
+    *   Identifies ARM child resource types under a parent resource
+    *   Filters resources by deployability (PUT/PATCH with request body)
+    *   Supports multiple specs with API version preference
+    *   Outputs markdown or JSON format
 
 ## Installation
 
@@ -60,6 +65,36 @@ To generate a map-based module block for a submodule:
 This command reads the Terraform module at the specified path and generates:
 1.  `variables.<module_name>.tf`: A variable accepting a map of objects matching the submodule's inputs.
 2.  `main.<module_name>.tf`: A `module` block using `for_each` to iterate over the variable.
+
+### Child Resource Discovery
+
+To discover deployable child resources under a parent resource type:
+
+```bash
+./tfmodmake children -spec <path_or_url> -parent <resource_type> [-json]
+```
+
+This command inspects OpenAPI specs and returns child resource types that can be deployed under a parent resource.
+
+**Flags:**
+
+*   `-spec`: (Required, repeatable) Path or URL to OpenAPI specification. Can be specified multiple times to search across versions.
+*   `-parent`: (Required) Parent resource type (e.g., `Microsoft.App/managedEnvironments`).
+*   `-json`: (Optional) Output results as JSON instead of markdown.
+
+**Example:**
+
+```bash
+./tfmodmake children \
+  -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/ContainerApps/preview/2025-10-02-preview/ManagedEnvironments.json" \
+  -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/ContainerApps/preview/2025-10-02-preview/ManagedEnvironmentsDaprComponents.json" \
+  -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/ContainerApps/preview/2025-10-02-preview/ManagedEnvironmentsStorages.json" \
+  -parent "Microsoft.App/managedEnvironments"
+```
+
+Output shows:
+*   **Deployable Child Resources**: Resources with PUT/PATCH operations and request body schemas
+*   **Filtered Out**: Resources that cannot be deployed (GET-only, missing body schema, etc.) with reasons
 
 ## Examples
 
