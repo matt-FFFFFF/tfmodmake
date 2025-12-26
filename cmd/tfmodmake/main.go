@@ -30,6 +30,11 @@ func main() {
 		return
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "children" {
+		handleChildrenCommand()
+		return
+	}
+
 	specPath := flag.String("spec", "", "Path or URL to the OpenAPI specification")
 	resourceType := flag.String("resource", "", "Resource type to generate Terraform configuration for (e.g. Microsoft.ContainerService/managedClusters)")
 	rootPath := flag.String("root", "", "Path to the root object (e.g. properties or properties.foo)")
@@ -93,4 +98,59 @@ func main() {
 	}
 
 	fmt.Println("Successfully generated Terraform files")
+}
+
+// stringSliceFlag is a custom flag type that allows multiple values.
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	return strings.Join(*s, ", ")
+}
+
+func (s *stringSliceFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
+}
+
+func handleChildrenCommand() {
+	childrenCmd := flag.NewFlagSet("children", flag.ExitOnError)
+
+	var specs stringSliceFlag
+	childrenCmd.Var(&specs, "spec", "Path or URL to OpenAPI spec (can be specified multiple times)")
+	parent := childrenCmd.String("parent", "", "Parent resource type (e.g. Microsoft.App/managedEnvironments)")
+	jsonOutput := childrenCmd.Bool("json", false, "Output results as JSON instead of markdown")
+
+	if err := childrenCmd.Parse(os.Args[2:]); err != nil {
+		log.Fatalf("Failed to parse children arguments: %v", err)
+	}
+
+	if len(specs) == 0 {
+		log.Fatalf("Usage: %s children -spec <path_or_url> -parent <resource_type> [-json]\nAt least one -spec is required", os.Args[0])
+	}
+
+	if *parent == "" {
+		log.Fatalf("Usage: %s children -spec <path_or_url> -parent <resource_type> [-json]\n-parent is required", os.Args[0])
+	}
+
+	opts := openapi.DiscoverChildrenOptions{
+		Specs:  specs,
+		Parent: *parent,
+		Depth:  1, // Direct children only
+	}
+
+	result, err := openapi.DiscoverChildren(opts)
+	if err != nil {
+		log.Fatalf("Failed to discover children: %v", err)
+	}
+
+	if *jsonOutput {
+		jsonStr, err := openapi.FormatChildrenAsJSON(result)
+		if err != nil {
+			log.Fatalf("Failed to format as JSON: %v", err)
+		}
+		fmt.Println(jsonStr)
+	} else {
+		markdown := openapi.FormatChildrenAsMarkdown(result)
+		fmt.Print(markdown)
+	}
 }
