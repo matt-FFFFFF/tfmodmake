@@ -219,16 +219,18 @@ func handleAddChildCommand() {
 		log.Fatalf("Failed to parse addchild arguments: %v", err)
 	}
 
+	const addChildUsage = "Usage: %s addchild -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]"
+
 	if *parent == "" {
-		log.Fatalf("Usage: %s addchild -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]\n-parent is required", os.Args[0])
+		log.Fatalf(addChildUsage+"\n-parent is required", os.Args[0])
 	}
 
 	if *child == "" {
-		log.Fatalf("Usage: %s addchild -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]\n-child is required", os.Args[0])
+		log.Fatalf(addChildUsage+"\n-child is required", os.Args[0])
 	}
 
 	if len(specs) == 0 && *specRoot == "" {
-		log.Fatalf("Usage: %s addchild -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]\nAt least one -spec or -spec-root is required", os.Args[0])
+		log.Fatalf(addChildUsage+"\nAt least one -spec or -spec-root is required", os.Args[0])
 	}
 
 	githubToken := githubTokenFromEnv()
@@ -328,15 +330,20 @@ func generateChildModule(specs []string, childType, modulePath string) error {
 	var supportsTags bool
 	var supportsLocation bool
 
+	var loadErrors []string
+	var searchErrors []string
+
 	for _, specPath := range specs {
 		doc, err := openapi.LoadSpec(specPath)
 		if err != nil {
+			loadErrors = append(loadErrors, fmt.Sprintf("- %s: %v", specPath, err))
 			continue // Try next spec
 		}
 
 		// Try to find the child resource in this spec
 		foundSchema, err := openapi.FindResource(doc, childType)
 		if err != nil {
+			searchErrors = append(searchErrors, fmt.Sprintf("- %s: resource not found", specPath))
 			continue // Try next spec
 		}
 
@@ -365,7 +372,14 @@ func generateChildModule(specs []string, childType, modulePath string) error {
 	}
 
 	if schema == nil {
-		return fmt.Errorf("child resource type %s not found in any of the provided specs", childType)
+		errMsg := fmt.Sprintf("child resource type %s not found in any of the provided specs", childType)
+		if len(loadErrors) > 0 {
+			errMsg += fmt.Sprintf("\n\nSpec load errors:\n%s", strings.Join(loadErrors, "\n"))
+		}
+		if len(searchErrors) > 0 {
+			errMsg += fmt.Sprintf("\n\nSpecs checked:\n%s", strings.Join(searchErrors, "\n"))
+		}
+		return fmt.Errorf("%s", errMsg)
 	}
 
 	// Save current directory
