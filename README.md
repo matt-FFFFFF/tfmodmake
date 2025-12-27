@@ -10,6 +10,7 @@ CLI tool to generate base Terraform configuration from an OpenAPI specification.
 *   **Computed exports**: Auto-suggest `response_export_values` from read-only/non-writable response fields (with noise filtering).
 *   **Submodule helpers**: `addsub` generates map-based wrapper plumbing for submodules.
 *   **Scope discovery**: `children` lists deployable ARM child resource types under a parent (compact text or `-json`).
+*   **Child module composition**: `addchild` orchestrates end-to-end child module generation and wiring.
 
 ## Installation
 
@@ -45,6 +46,72 @@ To generate a map-based module block for a submodule:
 This command reads the Terraform module at the specified path and generates:
 1.  `variables.<module_name>.tf`: A variable accepting a map of objects matching the submodule's inputs.
 2.  `main.<module_name>.tf`: A `module` block using `for_each` to iterate over the variable.
+
+
+### Child Module Generation and Wiring
+
+The `addchild` command orchestrates the complete process of creating a child module and wiring it into the parent module:
+
+```bash
+./tfmodmake addchild -parent <parent_type> -child <child_type> [flags]
+```
+
+**Required flags:**
+
+*   `-parent`: Parent resource type (e.g., `Microsoft.App/managedEnvironments`)
+*   `-child`: Child resource type (e.g., `Microsoft.App/managedEnvironments/storages`)
+
+**Spec selection (one of):**
+
+*   `-spec-root`: (Recommended) GitHub tree URL under `Azure/azure-rest-api-specs` pointing at the service root directory. Automatically selects latest stable API version.
+*   `-spec`: Explicit spec path or URL (can be specified multiple times)
+
+**Optional flags:**
+
+*   `-include-preview`: Also include latest preview API version (only with `-spec-root`)
+*   `-include`: Glob pattern to filter spec files (default: `*.json`)
+*   `-module-dir`: Directory for child modules (default: `modules`)
+*   `-module-name`: Override derived module folder name (default: derived from child type)
+*   `-dry-run`: Print planned actions without writing files
+
+**What it does:**
+
+1.  Generates a complete child module scaffold at `<module-dir>/<module-name>/`
+2.  Wires the child module into the root module using the same mechanics as `addsub`
+
+**Example:**
+
+```bash
+# Using spec-root (recommended)
+./tfmodmake addchild \
+  -parent "Microsoft.App/managedEnvironments" \
+  -child "Microsoft.App/managedEnvironments/storages" \
+  -spec-root "https://github.com/Azure/azure-rest-api-specs/tree/main/specification/app/resource-manager/Microsoft.App/ContainerApps"
+
+# Using explicit spec
+./tfmodmake addchild \
+  -parent "Microsoft.KeyVault/vaults" \
+  -child "Microsoft.KeyVault/vaults/secrets" \
+  -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2024-11-01/secrets.json"
+
+# Custom module directory and name
+./tfmodmake addchild \
+  -parent "Microsoft.App/managedEnvironments" \
+  -child "Microsoft.App/managedEnvironments/certificates" \
+  -spec-root "https://github.com/Azure/azure-rest-api-specs/tree/main/specification/app/resource-manager/Microsoft.App/ContainerApps" \
+  -module-dir "submodules" \
+  -module-name "environment_certs"
+```
+
+**Generated files:**
+
+*   `<module-dir>/<module-name>/variables.tf`: Child module variables
+*   `<module-dir>/<module-name>/locals.tf`: Child module locals
+*   `<module-dir>/<module-name>/main.tf`: Child module resource
+*   `<module-dir>/<module-name>/outputs.tf`: Child module outputs
+*   `variables.<module-name>.tf`: Root module variable for child instances
+*   `main.<module-name>.tf`: Root module wrapper with `for_each`
+
 
 ## Examples
 
