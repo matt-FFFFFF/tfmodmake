@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -117,15 +118,55 @@ func handleChildrenCommand() {
 
 	var specs stringSliceFlag
 	childrenCmd.Var(&specs, "spec", "Path or URL to OpenAPI spec (can be specified multiple times)")
+	githubDir := childrenCmd.String("github-dir", "", "GitHub directory URL (https://github.com/<owner>/<repo>/tree/<ref>/<dir>) to discover spec files from")
+	discoverFromSpec := childrenCmd.Bool("discover", false, "Discover additional spec files from the directory of the provided raw.githubusercontent.com -spec URL")
+	discoverLatest := childrenCmd.Bool("discover-latest", false, "When discovering specs from GitHub, select the latest API version folder (stable by default; see -discover-include-preview / -discover-prefer-preview)")
+	discoverIncludePreview := childrenCmd.Bool("discover-include-preview", false, "When used with -discover-latest, also include specs from the latest preview API version folder")
+	discoverPreferPreview := childrenCmd.Bool("discover-prefer-preview", false, "When used with -discover-latest, prefer preview over stable (useful when no stable version exists yet)")
+	includeGlob := childrenCmd.String("include", "*.json", "Glob filter used when discovering spec files (matched against filename, e.g. ManagedEnvironments*.json)")
 	parent := childrenCmd.String("parent", "", "Parent resource type (e.g. Microsoft.App/managedEnvironments)")
 	jsonOutput := childrenCmd.Bool("json", false, "Output results as JSON instead of markdown")
+	printResolvedSpecs := childrenCmd.Bool("print-resolved-specs", false, "Print the resolved spec list to stderr before analysis")
 
 	if err := childrenCmd.Parse(os.Args[2:]); err != nil {
 		log.Fatalf("Failed to parse children arguments: %v", err)
 	}
 
+	githubToken := githubTokenFromEnv()
+
+	includeGlobs := []string{*includeGlob}
+	if *includeGlob == "*.json" && *parent != "" {
+		includeGlobs = defaultDiscoveryGlobsForParent(*parent)
+	}
+
+	resolver := defaultSpecResolver{}
+	resolveReq := ResolveRequest{
+		Seeds:            specs,
+		GitHubDir:         *githubDir,
+		DiscoverFromSeed:  *discoverFromSpec,
+		DiscoverLatest:    *discoverLatest,
+		IncludeGlobs:      includeGlobs,
+		PreferPreview:     *discoverPreferPreview,
+		IncludePreview:    *discoverIncludePreview,
+		GitHubToken:       githubToken,
+	}
+	resolved, err := resolver.Resolve(context.Background(), resolveReq)
+	if err != nil {
+		log.Fatalf("Failed to resolve specs: %v", err)
+	}
+
+	if *printResolvedSpecs {
+		writeResolvedSpecs(os.Stderr, resolved.Specs)
+	}
+
+	// Extract sources for analysis.
+	specs = specs[:0]
+	for _, spec := range resolved.Specs {
+		specs = append(specs, spec.Source)
+	}
+
 	if len(specs) == 0 {
-		log.Fatalf("Usage: %s children -spec <path_or_url> -parent <resource_type> [-json]\nAt least one -spec is required", os.Args[0])
+		log.Fatalf("Usage: %s children -spec <path_or_url> [-discover] [-discover-latest] [-discover-include-preview] [-discover-prefer-preview] [-include <glob>] [-github-dir <url>] -parent <resource_type> [-json]\nAt least one -spec is required (or use -github-dir / -discover to expand specs)", os.Args[0])
 	}
 
 	if *parent == "" {
@@ -150,7 +191,23 @@ func handleChildrenCommand() {
 		}
 		fmt.Println(jsonStr)
 	} else {
-		markdown := openapi.FormatChildrenAsMarkdown(result)
-		fmt.Print(markdown)
+		text := openapi.FormatChildrenAsText(result)
+		fmt.Print(text)
 	}
+}
+
+func defaultDiscoveryGlobsForParent(parentType string) []string {
+	// When the user didn't specify -include (defaults to *.json), try a narrower
+	// pattern first to avoid pulling unrelated specs from big version folders.
+	// If it matches nothing, discovery code will fall back to *.json.
+	last := parentType
+	if idx := strings.LastIndex(parentType, "/"); idx >= 0 {
+		last = parentType[idx+1:]
+	}
+	if last == "" {
+		return []string{"*.json"}
+	}
+	// Common ARM spec files are PascalCase, e.g. ManagedEnvironments*.json.
+	pascal := strings.ToUpper(last[:1]) + last[1:]
+	return []string{pascal + "*.json", "*.json"}
 }

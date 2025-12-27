@@ -169,6 +169,24 @@ func TestAzureARMInstancePathInfo(t *testing.T) {
 		assert.Equal(t, "childName", nameParam)
 	})
 
+	t.Run("singleton constant instance path", func(t *testing.T) {
+		t.Parallel()
+
+		resourceType, nameParam, ok := azureARMInstancePathInfo("/providers/Microsoft.Storage/storageAccounts/{accountName}/blobServices/default")
+		require.True(t, ok)
+		assert.Equal(t, "Microsoft.Storage/storageAccounts/blobServices", resourceType)
+		assert.Equal(t, "default", nameParam)
+	})
+
+	t.Run("nested path with singleton segment", func(t *testing.T) {
+		t.Parallel()
+
+		resourceType, nameParam, ok := azureARMInstancePathInfo("/providers/Microsoft.Storage/storageAccounts/{accountName}/blobServices/default/containers/{containerName}")
+		require.True(t, ok)
+		assert.Equal(t, "Microsoft.Storage/storageAccounts/blobServices/containers", resourceType)
+		assert.Equal(t, "containerName", nameParam)
+	})
+
 	t.Run("collection path rejected", func(t *testing.T) {
 		t.Parallel()
 

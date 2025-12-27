@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFormatChildrenAsMarkdown(t *testing.T) {
+func TestFormatChildrenAsText(t *testing.T) {
 	t.Run("formats deployable and filtered out resources", func(t *testing.T) {
 		result := &ChildrenResult{
 			Deployable: []ChildResource{
@@ -31,18 +31,14 @@ func TestFormatChildrenAsMarkdown(t *testing.T) {
 			},
 		}
 
-		markdown := FormatChildrenAsMarkdown(result)
+		text := FormatChildrenAsText(result)
 
-		assert.Contains(t, markdown, "# Deployable Child Resources")
-		assert.Contains(t, markdown, "| API Version", "markdown header should include API Version column")
-		assert.Contains(t, markdown, "Microsoft.App/managedEnvironments/certificates")
-		assert.Contains(t, markdown, "# Filtered Out")
-		assert.Contains(t, markdown, "Microsoft.App/managedEnvironments/status")
-		assert.Contains(t, markdown, "GET-only resource")
-
-		// API version should be padded to at least preview-width (18 chars).
-		// "2024-01-01" is 10 chars, so it should have 8 trailing spaces before the next column.
-		assert.Contains(t, markdown, "| 2024-01-01        |", "api version column should be padded for alignment")
+		assert.Contains(t, text, "Deployable child resources")
+		assert.Contains(t, text, "Microsoft.App/managedEnvironments/certificates")
+		assert.Contains(t, text, "Filtered out")
+		assert.Contains(t, text, "Microsoft.App/managedEnvironments/status")
+		assert.Contains(t, text, "GET-only resource")
+		assert.Contains(t, text, "2024-01-01")
 	})
 
 	t.Run("handles empty results", func(t *testing.T) {
@@ -51,15 +47,15 @@ func TestFormatChildrenAsMarkdown(t *testing.T) {
 			FilteredOut: []ChildResource{},
 		}
 
-		markdown := FormatChildrenAsMarkdown(result)
+			text := FormatChildrenAsText(result)
 
-		assert.Contains(t, markdown, "No deployable child resources found")
-		assert.Contains(t, markdown, "No resources were filtered out")
+			assert.Contains(t, text, "Deployable child resources")
+			assert.Contains(t, text, "(none)")
 	})
 
 	t.Run("handles nil result", func(t *testing.T) {
-		markdown := FormatChildrenAsMarkdown(nil)
-		assert.Equal(t, "No results\n", markdown)
+		text := FormatChildrenAsText(nil)
+		assert.Equal(t, "No results\n", text)
 	})
 
 	t.Run("sorts by resource type", func(t *testing.T) {
@@ -71,11 +67,11 @@ func TestFormatChildrenAsMarkdown(t *testing.T) {
 			FilteredOut: []ChildResource{},
 		}
 
-		markdown := FormatChildrenAsMarkdown(result)
+		text := FormatChildrenAsText(result)
 
-		// Find positions of the resource types in the markdown
-		certPos := strings.Index(markdown, "certificates")
-		storagePos := strings.Index(markdown, "storages")
+		// Find positions of the resource types in the output
+		certPos := strings.Index(text, "certificates")
+		storagePos := strings.Index(text, "storages")
 
 		assert.Less(t, certPos, storagePos, "certificates should appear before storages in sorted output")
 	})

@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// FormatChildrenAsMarkdown formats the children result as a markdown table.
-func FormatChildrenAsMarkdown(result *ChildrenResult) string {
+// FormatChildrenAsText formats the children result as human-readable plain text.
+func FormatChildrenAsText(result *ChildrenResult) string {
 	if result == nil {
 		return "No results\n"
 	}
@@ -28,54 +28,45 @@ func FormatChildrenAsMarkdown(result *ChildrenResult) string {
 		return filteredOut[i].ResourceType < filteredOut[j].ResourceType
 	})
 
-	padRight := func(s string, width int) string {
-		if len(s) >= width {
-			return s
-		}
-		return s + strings.Repeat(" ", width-len(s))
-	}
-
-	// Keep API version column visually stable in terminals.
-	// "2025-10-02-preview" is 18 chars; pad shorter versions up to at least that width.
-	apiVersionWidth := 18
-	for _, child := range deployable {
-		if len(child.APIVersion) > apiVersionWidth {
-			apiVersionWidth = len(child.APIVersion)
-		}
-	}
-	for _, child := range filteredOut {
-		if len(child.APIVersion) > apiVersionWidth {
-			apiVersionWidth = len(child.APIVersion)
-		}
-	}
-
-	sb.WriteString("# Deployable Child Resources\n\n")
+	sb.WriteString("Deployable child resources\n")
 	if len(deployable) == 0 {
-		sb.WriteString("*No deployable child resources found.*\n\n")
+		sb.WriteString("(none)\n")
 	} else {
-		sb.WriteString("| API Version" + strings.Repeat(" ", apiVersionWidth-len("API Version")) + " | Resource Type |\n")
-		sb.WriteString("|" + strings.Repeat("-", apiVersionWidth+2) + "|--------------|\n")
 		for _, child := range deployable {
-			apiVersion := padRight(child.APIVersion, apiVersionWidth)
-			sb.WriteString("| " + apiVersion + " | " + child.ResourceType + " |\n")
+			apiVersion := child.APIVersion
+			if apiVersion == "" {
+				apiVersion = "(unknown)"
+			}
+			sb.WriteString("- " + apiVersion + "\t" + child.ResourceType + "\n")
 		}
-		sb.WriteString("\n")
 	}
+	sb.WriteString("\n")
 
-	sb.WriteString("# Filtered Out\n\n")
+	sb.WriteString("Filtered out\n")
 	if len(filteredOut) == 0 {
-		sb.WriteString("*No resources were filtered out.*\n\n")
+		sb.WriteString("(none)\n")
 	} else {
-		sb.WriteString("| API Version" + strings.Repeat(" ", apiVersionWidth-len("API Version")) + " | Resource Type | Reason |\n")
-		sb.WriteString("|" + strings.Repeat("-", apiVersionWidth+2) + "|--------------|--------|\n")
 		for _, child := range filteredOut {
-			apiVersion := padRight(child.APIVersion, apiVersionWidth)
-			sb.WriteString("| " + apiVersion + " | " + child.ResourceType + " | " + child.DeployabilityReason + " |\n")
+			apiVersion := child.APIVersion
+			if apiVersion == "" {
+				apiVersion = "(unknown)"
+			}
+			reason := child.DeployabilityReason
+			if reason == "" {
+				reason = "(no reason)"
+			}
+			sb.WriteString("- " + apiVersion + "\t" + child.ResourceType + "\t" + reason + "\n")
 		}
-		sb.WriteString("\n")
 	}
+	sb.WriteString("\n")
 
 	return sb.String()
+}
+
+// FormatChildrenAsMarkdown is kept for backwards compatibility.
+// It currently emits plain text (not markdown tables).
+func FormatChildrenAsMarkdown(result *ChildrenResult) string {
+	return FormatChildrenAsText(result)
 }
 
 // FormatChildrenAsJSON formats the children result as JSON.

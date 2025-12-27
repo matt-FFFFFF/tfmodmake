@@ -68,10 +68,12 @@ This command reads the Terraform module at the specified path and generates:
 
 ### Child Resource Discovery
 
+See also: docs/children-discovery.md
+
 To discover deployable child resources under a parent resource type:
 
 ```bash
-./tfmodmake children -spec <path_or_url> -parent <resource_type> [-json]
+./tfmodmake children -spec <path_or_url> [-discover] [-discover-latest] [-discover-include-preview] [-discover-prefer-preview] [-include <glob>] [-github-dir <url>] -parent <resource_type> [-json]
 ```
 
 This command inspects OpenAPI specs and returns child resource types that can be deployed under a parent resource.
@@ -79,8 +81,14 @@ This command inspects OpenAPI specs and returns child resource types that can be
 **Flags:**
 
 *   `-spec`: (Required, repeatable) Path or URL to OpenAPI specification. Can be specified multiple times to search across versions.
+*   `-discover`: (Optional) If `-spec` is a `raw.githubusercontent.com` URL, discover additional spec files from the same GitHub directory (via the GitHub contents API) and include them automatically.
+*   `-discover-latest`: (Optional) When discovering from GitHub (`-discover` and/or `-github-dir`), select the latest API version folder deterministically (stable by default).
+*   `-discover-include-preview`: (Optional) When used with `-discover-latest`, also include specs from the latest preview API version folder.
+*   `-discover-prefer-preview`: (Optional) When used with `-discover-latest`, prefer preview over stable (useful when there is no stable version yet).
+*   `-github-dir`: (Optional) GitHub directory URL in the form `https://github.com/<owner>/<repo>/tree/<ref>/<dir>` to discover spec files from (via the GitHub contents API).
+*   `-include`: (Optional) Glob matched against filenames when discovering spec files (default `*.json`). If you leave it as the default, `children` will try a narrower `ParentName*.json` pattern first (e.g. `ManagedEnvironments*.json`), and fall back to `*.json` if nothing matches.
 *   `-parent`: (Required) Parent resource type (e.g., `Microsoft.App/managedEnvironments`).
-*   `-json`: (Optional) Output results as JSON instead of markdown.
+*   `-json`: (Optional) Output results as JSON instead of plain text.
 
 **Example:**
 
@@ -92,11 +100,31 @@ This command inspects OpenAPI specs and returns child resource types that can be
   -parent "Microsoft.App/managedEnvironments"
 ```
 
+To avoid listing all the spec files manually, you can discover siblings from a single raw GitHub spec URL:
+
+```bash
+./tfmodmake children \
+  -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/ContainerApps/preview/2025-10-02-preview/ManagedEnvironments.json" \
+  -discover \
+  -include "ManagedEnvironments*.json" \
+  -parent "Microsoft.App/managedEnvironments"
+```
+
+To make discovery more deterministic when you only have a version folder (or you want a stable-by-default starting point), use `-discover-latest`:
+
+```bash
+./tfmodmake children \
+  -github-dir "https://github.com/Azure/azure-rest-api-specs/tree/main/specification/app/resource-manager/Microsoft.App/ContainerApps" \
+  -discover-latest \
+  -discover-include-preview \
+  -parent "Microsoft.App/managedEnvironments"
+```
+
 Output shows:
 *   **Deployable Child Resources**: Resources with PUT/PATCH operations and request body schemas
 *   **Filtered Out**: Resources that cannot be deployed (GET-only, missing body schema, etc.) with reasons
 
-Note: the default markdown output is intentionally compact (it does not include long example instance paths, which tend to wrap badly in terminals). Use `-json` if you want example paths for scripting or deeper inspection.
+Note: the default output is intentionally plain and compact for terminal use. Use `-json` if you want structured output (including example paths) for scripting or deeper inspection.
 
 ## Examples
 

@@ -3,7 +3,7 @@ package openapi
 import "strings"
 
 // azureARMInstancePathInfo parses an Azure ARM resource instance path and returns the
-// fully-qualified resource type (provider + type segments) and the final {name} parameter.
+// fully-qualified resource type (provider + type segments) and the final instance segment.
 //
 // Examples:
 // - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/widgets/{widgetName}
@@ -11,8 +11,13 @@ import "strings"
 // - .../providers/Microsoft.Test/widgets/{widgetName}/child/{childName}
 //   -> ("Microsoft.Test/widgets/child", "childName", true)
 //
-// It returns ok=false if the path is not a canonical instance path (i.e. doesn't end on a {name}
-// segment with a preceding fixed type segment).
+// It returns ok=false if the path is not a canonical instance path.
+//
+// Notes:
+// - Most ARM instance paths alternate fixed type segments and parameterized instance names.
+// - Some Azure resources use a fixed singleton instance name (e.g. .../blobServices/default).
+// - Nested "/providers/{namespace}" segments (extension resources) are intentionally rejected by
+//   this helper; it only models the common single-provider path shape used in most specs.
 func azureARMInstancePathInfo(path string) (resourceType string, nameParam string, ok bool) {
 	trimmed := strings.Trim(path, "/")
 	if trimmed == "" {
@@ -43,21 +48,36 @@ func azureARMInstancePathInfo(path string) (resourceType string, nameParam strin
 		if seg == "" || isPathParam(seg) {
 			return "", "", false
 		}
+		if strings.EqualFold(seg, "providers") {
+			return "", "", false
+		}
 
-		// Must be followed by a {name} parameter.
-		if i+1 >= len(segments) || !isPathParam(segments[i+1]) {
+		// Must be followed by an instance segment (either a {name} parameter or a fixed singleton name).
+		if i+1 >= len(segments) {
 			break
+		}
+		instanceSeg := segments[i+1]
+		if instanceSeg == "" {
+			return "", "", false
+		}
+		if strings.EqualFold(instanceSeg, "providers") {
+			return "", "", false
 		}
 
 		typeSegments = append(typeSegments, seg)
-		lastNameParam = strings.TrimSuffix(strings.TrimPrefix(segments[i+1], "{"), "}")
-		if lastNameParam == "" {
-			return "", "", false
+		if isPathParam(instanceSeg) {
+			lastNameParam = strings.TrimSuffix(strings.TrimPrefix(instanceSeg, "{"), "}")
+			if lastNameParam == "" {
+				return "", "", false
+			}
+		} else {
+			// Fixed singleton instance name (e.g. "default").
+			lastNameParam = instanceSeg
 		}
 		i += 2
 	}
 
-	// Only treat this as an instance path if we consumed all segments and ended on a {name}.
+	// Only treat this as an instance path if we consumed all segments and ended on an instance segment.
 	if providersIdx+2+2*len(typeSegments) != len(segments) {
 		return "", "", false
 	}
