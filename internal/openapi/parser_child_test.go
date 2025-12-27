@@ -14,13 +14,13 @@ func TestFindResource_ExcludesChildResources(t *testing.T) {
 
 	// Parent resource schema
 	parentSchema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
+		Type:        &openapi3.Types{"object"},
 		Description: "Parent Resource",
 	}
-	
+
 	// Child resource schema
 	childSchema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
+		Type:        &openapi3.Types{"object"},
 		Description: "Child Resource",
 	}
 
@@ -66,10 +66,10 @@ func TestFindResource_ExcludesChildResources(t *testing.T) {
 	// Since map iteration order is random, we can't rely on order.
 	// But the current implementation might pick the child if it encounters it.
 	// We want to ensure it ALWAYS picks the parent.
-	
+
 	// To verify the bug, we might need to run this multiple times or force the order if possible.
 	// But better, let's just implement the fix and verify it works.
-	
+
 	schema, err := FindResource(doc, resourceType)
 	assert.NoError(t, err)
 	assert.Equal(t, parentSchema, schema, "Should return parent schema, not child")

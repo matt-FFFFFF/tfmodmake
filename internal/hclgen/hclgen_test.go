@@ -52,6 +52,59 @@ func TestTokensForPath(t *testing.T) {
 	}
 }
 
+func TestTokensForTraversalOrIndex(t *testing.T) {
+	tests := []struct {
+		name     string
+		parts    []string
+		expected string
+	}{
+		{
+			name:     "simple identifiers use dot traversal",
+			parts:    []string{"azapi_resource", "this", "output", "properties", "foo"},
+			expected: "azapi_resource.this.output.properties.foo",
+		},
+		{
+			name:     "hyphenated key uses bracket traversal",
+			parts:    []string{"azapi_resource", "this", "output", "properties", "foo-bar"},
+			expected: "azapi_resource.this.output.properties[\"foo-bar\"]",
+		},
+		{
+			name:     "mixed path uses both dot and bracket traversal",
+			parts:    []string{"azapi_resource", "this", "output", "properties", "foo-bar", "baz"},
+			expected: "azapi_resource.this.output.properties[\"foo-bar\"].baz",
+		},
+		{
+			name:     "keys with spaces use bracket traversal",
+			parts:    []string{"azapi_resource", "this", "output", "properties", "foo bar"},
+			expected: "azapi_resource.this.output.properties[\"foo bar\"]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokens := TokensForTraversalOrIndex(tt.parts...)
+			assert.Equal(t, tt.expected, string(tokens.Bytes()))
+		})
+	}
+}
+
+func TestTokensForMultilineStringList(t *testing.T) {
+	t.Run("empty list", func(t *testing.T) {
+		tokens := TokensForMultilineStringList(nil)
+		assert.Equal(t, "[]", string(tokens.Bytes()))
+	})
+
+	t.Run("single element", func(t *testing.T) {
+		tokens := TokensForMultilineStringList([]string{"a"})
+		assert.Equal(t, "[\n\"a\"\n]", string(tokens.Bytes()))
+	})
+
+	t.Run("multiple elements", func(t *testing.T) {
+		tokens := TokensForMultilineStringList([]string{"a", "b"})
+		assert.Equal(t, "[\n\"a\",\n\"b\"\n]", string(tokens.Bytes()))
+	})
+}
+
 func TestTernary(t *testing.T) {
 	condition := hclwrite.TokensForIdentifier("var.enabled")
 	trueExpr := hclwrite.TokensForIdentifier("var.value")

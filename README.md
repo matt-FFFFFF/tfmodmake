@@ -1,29 +1,24 @@
 # tfmodmake
 
-CLI tool to generate base Terraform configuration (`variables.tf` and `locals.tf`) from an OpenAPI specification.
+CLI tool to generate base Terraform configuration from an OpenAPI specification.
 
 ## Features
 
-*   Parses OpenAPI 3.0 specifications from local files or URLs.
-*   Extracts schema for a specific resource type.
-*   Generates Terraform variables with appropriate types and descriptions.
-*   Handles nested objects and arrays.
-*   Generates validation blocks for top-level enum variables.
-*   Creates a `locals.tf` file to map Terraform variables back to the API JSON structure.
-*   Supports targeting a specific root object (e.g., `properties`) to exclude unwanted fields.
-*   Customizable local variable naming.
-*   Generates scaffolded `main.tf` and `outputs.tf` for an `azapi_resource`.
-*   Includes base variables for `name`, `parent_id`, and conditional `tags` (when the resource supports tags).
-*   Generates map-based module blocks for submodules using `addsub` command.
+*   **OpenAPI → Terraform scaffolding**: Generate `variables.tf`, `locals.tf`, `main.tf`, and `outputs.tf` for an `azapi_resource`.
+*   **Good Terraform ergonomics**: Strong typing, descriptions, nested object/array handling, and optional “flatten `properties`” variable shape.
+*   **Schema-driven validations**: Null-safe validation blocks from common constraints (lengths, patterns, ranges, enums).
+*   **Computed exports**: Auto-suggest `response_export_values` from read-only/non-writable response fields (with noise filtering).
+*   **Submodule helpers**: `addsub` generates map-based wrapper plumbing for submodules.
+*   **Scope discovery**: `children` lists deployable ARM child resource types under a parent (compact text or `-json`).
 
 ## Installation
 
 Build from source:
 
 ```bash
-git clone https://github.com/user/tfmodmake.git
+git clone https://github.com/matt-FFFFFF/tfmodmake.git
 cd tfmodmake
-go build -o tfmodmake cmd/tfmodmake/main.go
+go build -o tfmodmake ./cmd/tfmodmake
 ```
 
 ## Usage
@@ -58,9 +53,42 @@ This command reads the Terraform module at the specified path and generates:
 Generate configuration for the entire resource:
 
 ```bash
+# example with AKS and stable API
 ./tfmodmake \
-  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2023-01-01/managedClusters.json \
+  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json \
   -resource Microsoft.ContainerService/managedClusters
+```
+
+```bash
+# example with Container Apps Managed Environment & preview API
+./tfmodmake \
+  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/ContainerApps/preview/2025-10-02-preview/ManagedEnvironments.json \
+  -resource Microsoft.App/managedEnvironments
+```
+
+```bash
+# KeyVault and KeyVault secret
+./tfmodmake \
+  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2025-05-01/openapi.json \
+  -resource Microsoft.KeyVault/vaults
+
+./tfmodmake \
+  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2024-11-01/secrets.json \
+  -resource Microsoft.KeyVault/vaults/secrets \
+  -local-name secret_body
+```
+
+### Submodule Wrapper Generation
+
+Generate a map-based wrapper for an existing Terraform submodule:
+
+```bash
+# From the parent module directory:
+./tfmodmake addsub modules/secrets
+
+# Generates:
+# - variables.secrets.tf
+# - main.secrets.tf
 ```
 
 ### Targeting a Sub-property
@@ -96,3 +124,65 @@ The tool generates four files in the current directory:
 2.  `locals.tf`: Contains the local value constructing the JSON body structure.
 3.  `main.tf`: Scaffold for the `azapi_resource` using the generated locals.
 4.  `outputs.tf`: Outputs exposing the resource ID and name.
+
+When generating the full resource schema (no `-root`), the OpenAPI top-level `properties` object is flattened so its children become top-level Terraform variables (for example `app_logs_configuration`, `custom_domain_configuration`, etc.), and `locals.tf` reconstructs the JSON `properties` object from those variables.
+
+When using `-root properties`, `locals.tf` represents the `properties` object and `main.tf` wraps it under `body.properties`.
+
+## Validation Blocks
+
+The tool automatically generates Terraform validation blocks from OpenAPI schema constraints, helping catch invalid inputs early with clear error messages. Supported constraints include:
+
+- **String validations**: minLength, maxLength, pattern (regex), format (UUID)
+- **Array validations**: minItems, maxItems, uniqueItems
+- **Numeric validations**: minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf
+- **Enum validations**: Direct enum, allOf composition, Azure x-ms-enum extension
+
+All validations are null-safe for optional fields. See [docs/validations.md](docs/validations.md) for detailed documentation and examples.
+
+## Advanced: Child Resource Discovery
+
+See also: [docs/children-discovery.md](docs/children-discovery.md)
+
+The `children` command inspects OpenAPI specs and returns child resource types that can be deployed under a parent resource.
+
+```bash
+./tfmodmake children -spec <path_or_url> -parent <resource_type> [-json]
+```
+
+**Common flags:**
+
+*   `-spec`: (Required, repeatable) Path or URL to OpenAPI specification. Can be specified multiple times to search across versions.
+*   `-parent`: (Required) Parent resource type (e.g., `Microsoft.App/managedEnvironments`).
+*   `-json`: (Optional) Output results as JSON instead of plain text.
+
+**Discovery flags (advanced):**
+
+Recommended: use `-spec-root`.
+
+It gives you a deterministic “latest stable” starting point without manually enumerating spec URLs.
+
+Example:
+
+```bash
+./tfmodmake children \
+  -spec-root "https://github.com/Azure/azure-rest-api-specs/tree/main/specification/app/resource-manager/Microsoft.App/ContainerApps" \
+  -include-preview \
+  -parent "Microsoft.App/managedEnvironments"
+```
+
+Other discovery options (details in [docs/children-discovery.md](docs/children-discovery.md)):
+
+- `-discover`: when `-spec` is a `raw.githubusercontent.com` URL, pull in sibling spec files from the same directory.
+- `-include`: restrict which spec files are included during discovery (glob).
+- If you hit GitHub rate limits, set `GITHUB_TOKEN` (or `GH_TOKEN`) and retry.
+
+**Debugging:**
+
+*   `-print-resolved-specs`: (Optional) Print the final resolved spec list to **stderr** before analysis. Useful for diagnosing missing children without polluting stdout/JSON output.
+
+Output shows:
+*   **Deployable Child Resources**: Resources with PUT/PATCH operations and request body schemas
+*   **Filtered Out**: Resources that cannot be deployed (GET-only, missing body schema, etc.) with reasons
+
+Note: the default output is intentionally plain and compact for terminal use. Use `-json` if you want structured output (including example paths) for scripting or deeper inspection.
