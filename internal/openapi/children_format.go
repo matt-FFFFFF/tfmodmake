@@ -2,7 +2,6 @@ package openapi
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -29,23 +28,36 @@ func FormatChildrenAsMarkdown(result *ChildrenResult) string {
 		return filteredOut[i].ResourceType < filteredOut[j].ResourceType
 	})
 
+	padRight := func(s string, width int) string {
+		if len(s) >= width {
+			return s
+		}
+		return s + strings.Repeat(" ", width-len(s))
+	}
+
+	// Keep API version column visually stable in terminals.
+	// "2025-10-02-preview" is 18 chars; pad shorter versions up to at least that width.
+	apiVersionWidth := 18
+	for _, child := range deployable {
+		if len(child.APIVersion) > apiVersionWidth {
+			apiVersionWidth = len(child.APIVersion)
+		}
+	}
+	for _, child := range filteredOut {
+		if len(child.APIVersion) > apiVersionWidth {
+			apiVersionWidth = len(child.APIVersion)
+		}
+	}
+
 	sb.WriteString("# Deployable Child Resources\n\n")
 	if len(deployable) == 0 {
 		sb.WriteString("*No deployable child resources found.*\n\n")
 	} else {
-		sb.WriteString("| Resource Type | Operations | API Version | Example Path(s) |\n")
-		sb.WriteString("|--------------|------------|-------------|----------------|\n")
+		sb.WriteString("| API Version" + strings.Repeat(" ", apiVersionWidth-len("API Version")) + " | Resource Type |\n")
+		sb.WriteString("|" + strings.Repeat("-", apiVersionWidth+2) + "|--------------|\n")
 		for _, child := range deployable {
-			ops := strings.Join(child.Operations, ", ")
-			examplePath := ""
-			if len(child.ExamplePaths) > 0 {
-				examplePath = child.ExamplePaths[0]
-				if len(child.ExamplePaths) > 1 {
-					examplePath += fmt.Sprintf(" (+%d more)", len(child.ExamplePaths)-1)
-				}
-			}
-			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n",
-				child.ResourceType, ops, child.APIVersion, examplePath))
+			apiVersion := padRight(child.APIVersion, apiVersionWidth)
+			sb.WriteString("| " + apiVersion + " | " + child.ResourceType + " |\n")
 		}
 		sb.WriteString("\n")
 	}
@@ -54,19 +66,11 @@ func FormatChildrenAsMarkdown(result *ChildrenResult) string {
 	if len(filteredOut) == 0 {
 		sb.WriteString("*No resources were filtered out.*\n\n")
 	} else {
-		sb.WriteString("| Resource Type | Reason | Operations | API Version | Example Path(s) |\n")
-		sb.WriteString("|--------------|--------|------------|-------------|----------------|\n")
+		sb.WriteString("| API Version" + strings.Repeat(" ", apiVersionWidth-len("API Version")) + " | Resource Type | Reason |\n")
+		sb.WriteString("|" + strings.Repeat("-", apiVersionWidth+2) + "|--------------|--------|\n")
 		for _, child := range filteredOut {
-			ops := strings.Join(child.Operations, ", ")
-			examplePath := ""
-			if len(child.ExamplePaths) > 0 {
-				examplePath = child.ExamplePaths[0]
-				if len(child.ExamplePaths) > 1 {
-					examplePath += fmt.Sprintf(" (+%d more)", len(child.ExamplePaths)-1)
-				}
-			}
-			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s |\n",
-				child.ResourceType, child.DeployabilityReason, ops, child.APIVersion, examplePath))
+			apiVersion := padRight(child.APIVersion, apiVersionWidth)
+			sb.WriteString("| " + apiVersion + " | " + child.ResourceType + " | " + child.DeployabilityReason + " |\n")
 		}
 		sb.WriteString("\n")
 	}

@@ -96,6 +96,8 @@ Output shows:
 *   **Deployable Child Resources**: Resources with PUT/PATCH operations and request body schemas
 *   **Filtered Out**: Resources that cannot be deployed (GET-only, missing body schema, etc.) with reasons
 
+Note: the default markdown output is intentionally compact (it does not include long example instance paths, which tend to wrap badly in terminals). Use `-json` if you want example paths for scripting or deeper inspection.
+
 ## Examples
 
 ### Basic Usage

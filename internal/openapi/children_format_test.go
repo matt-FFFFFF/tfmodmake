@@ -34,11 +34,15 @@ func TestFormatChildrenAsMarkdown(t *testing.T) {
 		markdown := FormatChildrenAsMarkdown(result)
 
 		assert.Contains(t, markdown, "# Deployable Child Resources")
+		assert.Contains(t, markdown, "| API Version", "markdown header should include API Version column")
 		assert.Contains(t, markdown, "Microsoft.App/managedEnvironments/certificates")
-		assert.Contains(t, markdown, "PUT, GET, DELETE")
 		assert.Contains(t, markdown, "# Filtered Out")
 		assert.Contains(t, markdown, "Microsoft.App/managedEnvironments/status")
 		assert.Contains(t, markdown, "GET-only resource")
+
+		// API version should be padded to at least preview-width (18 chars).
+		// "2024-01-01" is 10 chars, so it should have 8 trailing spaces before the next column.
+		assert.Contains(t, markdown, "| 2024-01-01        |", "api version column should be padded for alignment")
 	})
 
 	t.Run("handles empty results", func(t *testing.T) {
@@ -74,34 +78,6 @@ func TestFormatChildrenAsMarkdown(t *testing.T) {
 		storagePos := strings.Index(markdown, "storages")
 
 		assert.Less(t, certPos, storagePos, "certificates should appear before storages in sorted output")
-	})
-
-	t.Run("shows multiple paths with count", func(t *testing.T) {
-		result := &ChildrenResult{
-			Deployable: []ChildResource{
-				{
-					ResourceType: "Microsoft.App/managedEnvironments/certificates",
-					Operations:   []string{"PUT"},
-					APIVersion:   "2024-01-01",
-					ExamplePaths: []string{"/path1", "/path2", "/path3"},
-					IsDeployable: true,
-				},
-			},
-			FilteredOut: []ChildResource{
-				{
-					ResourceType:        "Microsoft.App/managedEnvironments/status",
-					Operations:          []string{"GET"},
-					APIVersion:          "2024-01-01",
-					ExamplePaths:        []string{"/statusPath1", "/statusPath2"},
-					DeployabilityReason: "GET-only resource",
-				},
-			},
-		}
-
-		markdown := FormatChildrenAsMarkdown(result)
-
-		assert.Contains(t, markdown, "/path1 (+2 more)", "should show first path with count for deployable")
-		assert.Contains(t, markdown, "/statusPath1 (+1 more)", "should show first path with count for filtered out")
 	})
 }
 
