@@ -347,6 +347,140 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 		}
 	}
 
+	// Add AVM interface variables
+	// These are always added to support AVM interface requirements
+	if len(secrets) > 0 || len(keys) > 0 {
+		body.AppendNewline()
+	}
+
+	// enable_telemetry
+	telemetryBody := appendVariable(
+		"enable_telemetry",
+		"Enable telemetry for this module via the Customer Usage Attribution ID (GUID).",
+		hclwrite.TokensForIdentifier("bool"),
+	)
+	seenNames["enable_telemetry"] = struct{}{}
+	telemetryBody.SetAttributeValue("default", cty.True)
+	body.AppendNewline()
+
+	// diagnostic_settings
+	diagBody := appendVariable(
+		"diagnostic_settings",
+		"Diagnostic settings configuration for this resource. Each key in the map represents a unique diagnostic setting.",
+		hclwrite.TokensForFunctionCall("map", hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+			{Name: hclwrite.TokensForIdentifier("name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("log_categories"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")))},
+			{Name: hclwrite.TokensForIdentifier("log_groups"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")))},
+			{Name: hclwrite.TokensForIdentifier("metric_categories"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")))},
+			{Name: hclwrite.TokensForIdentifier("log_analytics_destination_type"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("workspace_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("storage_account_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("event_hub_authorization_rule_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("event_hub_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("marketplace_partner_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+		}))),
+	)
+	seenNames["diagnostic_settings"] = struct{}{}
+	diagBody.SetAttributeValue("default", cty.MapValEmpty(cty.DynamicPseudoType))
+	body.AppendNewline()
+
+	// role_assignments
+	roleBody := appendVariable(
+		"role_assignments",
+		"Role assignments to create for this resource. Each key in the map represents a unique role assignment.",
+		hclwrite.TokensForFunctionCall("map", hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+			{Name: hclwrite.TokensForIdentifier("role_definition_id_or_name"), Value: hclwrite.TokensForIdentifier("string")},
+			{Name: hclwrite.TokensForIdentifier("principal_id"), Value: hclwrite.TokensForIdentifier("string")},
+			{Name: hclwrite.TokensForIdentifier("description"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("skip_service_principal_aad_check"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("bool"))},
+			{Name: hclwrite.TokensForIdentifier("condition"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("condition_version"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("delegated_managed_identity_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("principal_type"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+		}))),
+	)
+	seenNames["role_assignments"] = struct{}{}
+	roleBody.SetAttributeValue("default", cty.MapValEmpty(cty.DynamicPseudoType))
+	body.AppendNewline()
+
+	// lock
+	lockBody := appendVariable(
+		"lock",
+		"Lock configuration for this resource.",
+		hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+			{Name: hclwrite.TokensForIdentifier("kind"), Value: hclwrite.TokensForIdentifier("string")},
+			{Name: hclwrite.TokensForIdentifier("name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+		})),
+	)
+	seenNames["lock"] = struct{}{}
+	lockBody.SetAttributeRaw("default", hclwrite.TokensForIdentifier("null"))
+	body.AppendNewline()
+
+	// private_endpoints
+	peBody := appendVariable(
+		"private_endpoints",
+		"Private endpoint configuration for this resource. Each key in the map represents a unique private endpoint.",
+		hclwrite.TokensForFunctionCall("map", hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+			{Name: hclwrite.TokensForIdentifier("name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("subresource_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("subnet_resource_id"), Value: hclwrite.TokensForIdentifier("string")},
+			{Name: hclwrite.TokensForIdentifier("private_dns_zone_group_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("private_dns_zone_resource_ids"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")))},
+			{Name: hclwrite.TokensForIdentifier("application_security_group_associations"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("map", hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+				{Name: hclwrite.TokensForIdentifier("application_security_group_resource_id"), Value: hclwrite.TokensForIdentifier("string")},
+			}))))},
+			{Name: hclwrite.TokensForIdentifier("private_service_connection_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("network_interface_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("location"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("resource_group_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			{Name: hclwrite.TokensForIdentifier("ip_configurations"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("map", hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+				{Name: hclwrite.TokensForIdentifier("name"), Value: hclwrite.TokensForIdentifier("string")},
+				{Name: hclwrite.TokensForIdentifier("private_ip_address"), Value: hclwrite.TokensForIdentifier("string")},
+			}))))},
+			{Name: hclwrite.TokensForIdentifier("tags"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("map", hclwrite.TokensForIdentifier("string")))},
+			{Name: hclwrite.TokensForIdentifier("lock"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+				{Name: hclwrite.TokensForIdentifier("kind"), Value: hclwrite.TokensForIdentifier("string")},
+				{Name: hclwrite.TokensForIdentifier("name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			})))},
+			{Name: hclwrite.TokensForIdentifier("role_assignments"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("map", hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+				{Name: hclwrite.TokensForIdentifier("role_definition_id_or_name"), Value: hclwrite.TokensForIdentifier("string")},
+				{Name: hclwrite.TokensForIdentifier("principal_id"), Value: hclwrite.TokensForIdentifier("string")},
+				{Name: hclwrite.TokensForIdentifier("description"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+				{Name: hclwrite.TokensForIdentifier("skip_service_principal_aad_check"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("bool"))},
+				{Name: hclwrite.TokensForIdentifier("condition"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+				{Name: hclwrite.TokensForIdentifier("condition_version"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+				{Name: hclwrite.TokensForIdentifier("delegated_managed_identity_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+				{Name: hclwrite.TokensForIdentifier("principal_type"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
+			}))))},
+		}))),
+	)
+	seenNames["private_endpoints"] = struct{}{}
+	peBody.SetAttributeValue("default", cty.MapValEmpty(cty.DynamicPseudoType))
+	body.AppendNewline()
+
+	// private_endpoints_manage_dns_zone_group
+	peMgmtBody := appendVariable(
+		"private_endpoints_manage_dns_zone_group",
+		"Whether to manage the private DNS zone group for private endpoints.",
+		hclwrite.TokensForIdentifier("bool"),
+	)
+	seenNames["private_endpoints_manage_dns_zone_group"] = struct{}{}
+	peMgmtBody.SetAttributeValue("default", cty.True)
+
+	// Ensure location is always present (it's required by the interfaces module)
+	// If it wasn't already added due to supportsLocation, add it now
+	if !supportsLocation {
+		body.AppendNewline()
+		locationBody := appendVariable(
+			"location",
+			"The Azure location where the resource should be deployed. Required for private endpoint resources.",
+			hclwrite.TokensForIdentifier("string"),
+		)
+		seenNames["location"] = struct{}{}
+		// Don't set a default; make it required
+		_ = locationBody
+	}
+
 	return hclgen.WriteFile("variables.tf", file)
 }
 

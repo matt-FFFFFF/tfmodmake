@@ -13,7 +13,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField) error {
+func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string) error {
 	if schema == nil {
 		return nil
 	}
@@ -32,6 +32,9 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 	if supportsIdentity {
 		localBody.SetAttributeRaw("managed_identities", tokensForManagedIdentitiesLocal())
 	}
+
+	// Private endpoints local with opinionated defaults for subresource_name
+	localBody.SetAttributeRaw("private_endpoints", tokensForPrivateEndpointsLocal(resourceType))
 
 	return hclgen.WriteFile("locals.tf", file)
 }
@@ -296,4 +299,72 @@ func tokensForManagedIdentitiesLocal() hclwrite.Tokens {
 		{Name: hclwrite.TokensForIdentifier("system_assigned"), Value: systemAssignedOnly},
 		{Name: hclwrite.TokensForIdentifier("user_assigned"), Value: userAssignedOnly},
 	})
+}
+
+// tokensForPrivateEndpointsLocal generates the local.private_endpoints expression that provides
+// opinionated defaults for subresource_name based on the resource type.
+func tokensForPrivateEndpointsLocal(resourceType string) hclwrite.Tokens {
+	// Build the for expression: {
+	//   for k, v in var.private_endpoints : k => merge(
+	//     v,
+	//     {
+	//       subresource_name = coalesce(v.subresource_name, "<default>")
+	//     }
+	//   )
+	// }
+	// 
+	// If there's no default mapping for this resource type, use:
+	// {
+	//   for k, v in var.private_endpoints : k => v
+	// }
+
+	// Look up the default subresource name for this resource type
+	defaultSubresource, hasDefault := privateEndpointSubresourceMap[resourceType]
+
+	varPE := hclgen.TokensForTraversal("var", "private_endpoints")
+
+	if !hasDefault {
+		// No default mapping, just pass through the variable
+		var tokens hclwrite.Tokens
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("for")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(",")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("v")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("in")})
+		tokens = append(tokens, varPE...)
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenFatArrow, Bytes: []byte("=>")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("v")})
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrace, Bytes: []byte("}")})
+		return tokens
+	}
+
+	// Has default mapping, use merge with coalesce
+	var tokens hclwrite.Tokens
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")})
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("for")})
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(",")})
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("v")})
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("in")})
+	tokens = append(tokens, varPE...)
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenFatArrow, Bytes: []byte("=>")})
+	
+	// merge(v, { subresource_name = coalesce(v.subresource_name, "<default>") })
+	vSubresource := hclgen.TokensForTraversal("v", "subresource_name")
+	coalesceCall := hclwrite.TokensForFunctionCall("coalesce", vSubresource, hclwrite.TokensForValue(cty.StringVal(defaultSubresource)))
+	
+	mergeArg2 := hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+		{Name: hclwrite.TokensForIdentifier("subresource_name"), Value: coalesceCall},
+	})
+	
+	mergeCall := hclwrite.TokensForFunctionCall("merge", hclwrite.TokensForIdentifier("v"), mergeArg2)
+	tokens = append(tokens, mergeCall...)
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrace, Bytes: []byte("}")})
+	
+	return tokens
 }

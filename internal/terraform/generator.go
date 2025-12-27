@@ -3,7 +3,7 @@ package terraform
 
 import "github.com/getkin/kin-openapi/openapi3"
 
-// Generate generates variables.tf, locals.tf, main.tf, and outputs.tf based on the schema.
+// Generate generates variables.tf, locals.tf, main.tf, main.interfaces.tf, and outputs.tf based on the schema.
 //
 // The optional nameSchema parameter is used to attach validations to the top-level "name" variable.
 func Generate(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, nameSchema *openapi3.Schema) error {
@@ -23,7 +23,7 @@ func Generate(schema *openapi3.Schema, resourceType string, localName string, ap
 		return err
 	}
 	if hasSchema {
-		if err := generateLocals(schema, localName, supportsIdentity, secrets); err != nil {
+		if err := generateLocals(schema, localName, supportsIdentity, secrets, resourceType); err != nil {
 			return err
 		}
 	}
@@ -31,6 +31,9 @@ func Generate(schema *openapi3.Schema, resourceType string, localName string, ap
 		return err
 	}
 	if err := generateOutputs(schema); err != nil {
+		return err
+	}
+	if err := generateInterfaces(resourceType); err != nil {
 		return err
 	}
 	return nil
