@@ -23,11 +23,9 @@ type ResolveRequest struct {
 	GitHubDir string
 
 	DiscoverFromSeed bool
-	DiscoverLatest   bool
 
 	IncludeGlobs []string
 
-	PreferPreview  bool
 	IncludePreview bool
 
 	GitHubToken string
@@ -62,19 +60,11 @@ func (r defaultSpecResolver) Resolve(ctx context.Context, req ResolveRequest) (R
 			return ResolveResult{}, fmt.Errorf("invalid -github-dir: %w", err)
 		}
 
-		var urls []string
-		if req.DiscoverLatest {
-			urls, err = discoverDeterministicSpecSetFromGitHubDir(nil, loc, req.IncludeGlobs, req.GitHubToken, deterministicDiscoveryOptions{
-				PreferPreview:  req.PreferPreview,
-				IncludePreview: req.IncludePreview,
-			})
-		} else {
-			glob := "*.json"
-			if len(req.IncludeGlobs) > 0 {
-				glob = req.IncludeGlobs[0]
-			}
-			urls, err = listGitHubDirectoryDownloadURLs(nil, loc, glob, req.GitHubToken)
-		}
+		// Deterministic by default: treat -github-dir as a service root and select the latest stable
+		// version folder (optionally also include the latest preview folder).
+		urls, err := discoverDeterministicSpecSetFromGitHubDir(nil, loc, req.IncludeGlobs, req.GitHubToken, deterministicDiscoveryOptions{
+			IncludePreview: req.IncludePreview,
+		})
 		if err != nil {
 			return ResolveResult{}, fmt.Errorf("failed to discover specs from -github-dir: %w", err)
 		}
@@ -89,22 +79,11 @@ func (r defaultSpecResolver) Resolve(ctx context.Context, req ResolveRequest) (R
 				continue
 			}
 
-			var (
-				urls []string
-				err  error
-			)
-			if req.DiscoverLatest {
-				urls, err = discoverDeterministicSpecSetFromRawGitHubSpecURL(nil, seed, req.IncludeGlobs, req.GitHubToken, deterministicDiscoveryOptions{
-					PreferPreview:  req.PreferPreview,
-					IncludePreview: req.IncludePreview,
-				})
-			} else {
-				glob := "*.json"
-				if len(req.IncludeGlobs) > 0 {
-					glob = req.IncludeGlobs[0]
-				}
-				urls, err = discoverSiblingSpecsFromRawGitHubSpecURL(nil, seed, glob, req.GitHubToken)
+			glob := "*.json"
+			if len(req.IncludeGlobs) > 0 {
+				glob = req.IncludeGlobs[0]
 			}
+			urls, err := discoverSiblingSpecsFromRawGitHubSpecURL(nil, seed, glob, req.GitHubToken)
 			if err != nil {
 				return ResolveResult{}, fmt.Errorf("failed to discover sibling specs from -spec %s: %w", seed, err)
 			}
