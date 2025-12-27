@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/matt-FFFFFF/tfmodmake/internal/naming"
 	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
 	"github.com/matt-FFFFFF/tfmodmake/internal/submodule"
@@ -28,6 +29,11 @@ func main() {
 			log.Fatalf("Failed to add submodule: %v", err)
 		}
 		fmt.Println("Successfully generated submodule wrapper files")
+		return
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "addchild" {
+		handleAddChildCommand()
 		return
 	}
 
@@ -193,6 +199,194 @@ func handleChildrenCommand() {
 		text := openapi.FormatChildrenAsText(result)
 		fmt.Print(text)
 	}
+}
+
+func handleAddChildCommand() {
+	addChildCmd := flag.NewFlagSet("addchild", flag.ExitOnError)
+
+	var specs stringSliceFlag
+	addChildCmd.Var(&specs, "spec", "Path or URL to OpenAPI spec (can be specified multiple times)")
+	specRoot := addChildCmd.String("spec-root", "", "GitHub tree URL under Azure/azure-rest-api-specs (https://github.com/Azure/azure-rest-api-specs/tree/<ref>/<dir>)")
+	includePreview := addChildCmd.Bool("include-preview", false, "When discovering specs from a GitHub service root, also include the latest preview API version folder")
+	includeGlob := addChildCmd.String("include", "*.json", "Glob filter used when discovering spec files (matched against filename)")
+	parent := addChildCmd.String("parent", "", "Parent resource type (e.g. Microsoft.App/managedEnvironments)")
+	child := addChildCmd.String("child", "", "Child resource type (e.g. Microsoft.App/managedEnvironments/storages)")
+	moduleDir := addChildCmd.String("module-dir", "modules", "Directory where child modules live")
+	moduleName := addChildCmd.String("module-name", "", "Override derived module folder name")
+	dryRun := addChildCmd.Bool("dry-run", false, "Print planned actions without writing files")
+
+	if err := addChildCmd.Parse(os.Args[2:]); err != nil {
+		log.Fatalf("Failed to parse addchild arguments: %v", err)
+	}
+
+	if *parent == "" {
+		log.Fatalf("Usage: %s addchild -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]\n-parent is required", os.Args[0])
+	}
+
+	if *child == "" {
+		log.Fatalf("Usage: %s addchild -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]\n-child is required", os.Args[0])
+	}
+
+	if len(specs) == 0 && *specRoot == "" {
+		log.Fatalf("Usage: %s addchild -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]\nAt least one -spec or -spec-root is required", os.Args[0])
+	}
+
+	githubToken := githubTokenFromEnv()
+
+	includeGlobs := []string{*includeGlob}
+	if *includeGlob == "*.json" && *parent != "" {
+		includeGlobs = defaultDiscoveryGlobsForParent(*parent)
+	}
+
+	// Resolve specs using the same logic as children command
+	resolver := defaultSpecResolver{}
+	resolveReq := ResolveRequest{
+		Seeds:             specs,
+		GitHubServiceRoot: *specRoot,
+		DiscoverFromSeed:  false, // Not needed for addchild
+		IncludeGlobs:      includeGlobs,
+		IncludePreview:    *includePreview,
+		GitHubToken:       githubToken,
+	}
+	resolved, err := resolver.Resolve(context.Background(), resolveReq)
+	if err != nil {
+		log.Fatalf("Failed to resolve specs: %v", err)
+	}
+
+	specSources := make([]string, 0, len(resolved.Specs))
+	for _, spec := range resolved.Specs {
+		if spec.Source == "" {
+			continue
+		}
+		specSources = append(specSources, spec.Source)
+	}
+
+	if len(specSources) == 0 {
+		log.Fatalf("No specs resolved. Please provide -spec or -spec-root.")
+	}
+
+	// Derive module name from child type if not provided
+	finalModuleName := *moduleName
+	if finalModuleName == "" {
+		finalModuleName = deriveModuleName(*child)
+	}
+
+	// Construct module path
+	modulePath := fmt.Sprintf("%s/%s", strings.TrimSuffix(*moduleDir, "/"), finalModuleName)
+
+	if *dryRun {
+		fmt.Printf("DRY RUN: Would create/update child module at: %s\n", modulePath)
+		fmt.Printf("DRY RUN: Would wire child module into root module\n")
+		return
+	}
+
+	// Step 1: Generate/scaffold the child module
+	if err := generateChildModule(specSources, *child, modulePath); err != nil {
+		log.Fatalf("Failed to generate child module: %v", err)
+	}
+
+	// Step 2: Wire the child module into the root module using addsub logic
+	if err := submodule.Generate(modulePath); err != nil {
+		log.Fatalf("Failed to wire child module: %v", err)
+	}
+
+	fmt.Printf("Successfully created child module at: %s\n", modulePath)
+	fmt.Println("Successfully generated submodule wrapper files")
+}
+
+// deriveModuleName derives a module folder name from a child resource type.
+// Example: "Microsoft.App/managedEnvironments/storages" -> "storages"
+func deriveModuleName(childType string) string {
+	// Remove any trailing placeholder
+	normalized := childType
+	if strings.HasSuffix(normalized, "}") {
+		if idx := strings.LastIndex(normalized, "/{"); idx != -1 {
+			normalized = normalized[:idx]
+		}
+	}
+
+	// Get the last segment
+	lastSlash := strings.LastIndex(normalized, "/")
+	if lastSlash == -1 {
+		return normalized
+	}
+
+	return normalized[lastSlash+1:]
+}
+
+// generateChildModule generates a child module scaffold at the specified path.
+func generateChildModule(specs []string, childType, modulePath string) error {
+	// Create module directory if it doesn't exist
+	if err := os.MkdirAll(modulePath, 0o755); err != nil {
+		return fmt.Errorf("failed to create module directory: %w", err)
+	}
+
+	// Load specs and find the child resource
+	var schema *openapi3.Schema
+	var nameSchema *openapi3.Schema
+	var apiVersion string
+	var supportsTags bool
+	var supportsLocation bool
+
+	for _, specPath := range specs {
+		doc, err := openapi.LoadSpec(specPath)
+		if err != nil {
+			continue // Try next spec
+		}
+
+		// Try to find the child resource in this spec
+		foundSchema, err := openapi.FindResource(doc, childType)
+		if err != nil {
+			continue // Try next spec
+		}
+
+		// Found the resource!
+		schema = foundSchema
+
+		// Get API version
+		if doc.Info != nil {
+			apiVersion = doc.Info.Version
+		}
+
+		// Get name schema
+		nameSchema, _ = openapi.FindResourceNameSchema(doc, childType)
+
+		// Apply writability overrides
+		openapi.AnnotateSchemaRefOrigins(schema)
+		if resolver, err := openapi.NewPropertyWritabilityResolver(specPath); err == nil && resolver != nil {
+			openapi.ApplyPropertyWritabilityOverrides(schema, resolver)
+		}
+
+		// Check for tags and location support
+		supportsTags = terraform.SupportsTags(schema)
+		supportsLocation = terraform.SupportsLocation(schema)
+
+		break
+	}
+
+	if schema == nil {
+		return fmt.Errorf("child resource type %s not found in any of the provided specs", childType)
+	}
+
+	// Save current directory
+	originalDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("failed to get current directory: %w", err)
+	}
+
+	// Change to module directory
+	if err := os.Chdir(modulePath); err != nil {
+		return fmt.Errorf("failed to change to module directory: %w", err)
+	}
+	defer os.Chdir(originalDir)
+
+	// Generate Terraform files using the same logic as the main command
+	localName := "resource_body"
+	if err := terraform.Generate(schema, childType, localName, apiVersion, supportsTags, supportsLocation, nameSchema); err != nil {
+		return fmt.Errorf("failed to generate terraform files: %w", err)
+	}
+
+	return nil
 }
 
 func defaultDiscoveryGlobsForParent(parentType string) []string {
