@@ -16,7 +16,7 @@ CLI tool to generate base Terraform configuration from an OpenAPI specification.
 Build from source:
 
 ```bash
-git clone https://github.com/user/tfmodmake.git
+git clone https://github.com/matt-FFFFFF/tfmodmake.git
 cd tfmodmake
 go build -o tfmodmake ./cmd/tfmodmake
 ```

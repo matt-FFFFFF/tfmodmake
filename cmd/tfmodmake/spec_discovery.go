@@ -334,6 +334,22 @@ func discoverDeterministicSpecSetFromGitHubDir(client *http.Client, loc githubLo
 				return out, nil
 			}
 		}
+		// Fallback: if we're in stable-only mode and stable is missing/empty, try preview.
+		if len(out) == 0 && !opts.IncludePreview && previewCandidate != "" {
+			urls, err := discoverLatestVersionFilesFromStabilityRoot(client, githubLocation{Owner: loc.Owner, Repo: loc.Repo, Ref: loc.Ref, Dir: previewCandidate}, includeGlobs, githubToken)
+			if err == nil {
+				for _, u := range urls {
+					if _, exists := seen[u]; exists {
+						continue
+					}
+					seen[u] = struct{}{}
+					out = append(out, u)
+				}
+				if len(out) > 0 {
+					return out, nil
+				}
+			}
+		}
 		if len(out) > 0 {
 			return out, nil
 		}
@@ -350,18 +366,11 @@ func discoverDeterministicSpecSetFromGitHubDir(client *http.Client, loc githubLo
 
 func orderedNonEmptyRoots(stableRoot, previewRoot string, opts deterministicDiscoveryOptions) []string {
 	var roots []string
-	if opts.PreferPreview {
+	// Only handle ordering here; any fallback behavior (e.g. trying preview when stable is missing)
+	// is owned by the caller for clarity.
+	roots = append(roots, stableRoot)
+	if opts.IncludePreview {
 		roots = append(roots, previewRoot)
-		if opts.IncludePreview {
-			roots = append(roots, stableRoot)
-		}
-	} else {
-		roots = append(roots, stableRoot)
-		if opts.IncludePreview {
-			roots = append(roots, previewRoot)
-		} else {
-			roots = append(roots, previewRoot)
-		}
 	}
 	var out []string
 	seen := map[string]struct{}{}

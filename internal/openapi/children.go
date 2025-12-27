@@ -8,6 +8,8 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 )
 
+var apiVersionRegex = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}(?:-preview)?)`)
+
 // ChildResource represents a discovered child resource type.
 type ChildResource struct {
 	ResourceType         string   // e.g. "Microsoft.App/managedEnvironments/certificates"
@@ -101,8 +103,7 @@ func extractAPIVersion(doc *openapi3.T, specPath string) string {
 	// Strategy 2: Extract from spec path/URL
 	// Azure specs typically have paths like: .../stable/2024-01-01/... or .../preview/2024-01-01-preview/...
 	// Pattern: YYYY-MM-DD or YYYY-MM-DD-preview
-	apiVersionPattern := `(\d{4}-\d{2}-\d{2}(?:-preview)?)`
-	if matches := regexp.MustCompile(apiVersionPattern).FindStringSubmatch(specPath); len(matches) > 1 {
+	if matches := apiVersionRegex.FindStringSubmatch(specPath); len(matches) > 1 {
 		return matches[1]
 	}
 

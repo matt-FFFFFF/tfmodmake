@@ -155,13 +155,16 @@ func handleChildrenCommand() {
 		writeResolvedSpecs(os.Stderr, resolved.Specs)
 	}
 
-	// Extract sources for analysis.
-	specs = specs[:0]
+	// Extract sources for analysis (keep the flag-backed "specs" slice unmodified).
+	specSources := make([]string, 0, len(resolved.Specs))
 	for _, spec := range resolved.Specs {
-		specs = append(specs, spec.Source)
+		if spec.Source == "" {
+			continue
+		}
+		specSources = append(specSources, spec.Source)
 	}
 
-	if len(specs) == 0 {
+	if len(specSources) == 0 {
 		log.Fatalf("Usage: %s children -spec <path_or_url> [-discover] [-include-preview] [-include <glob>] [-spec-root <url>] -parent <resource_type> [-json]\nAt least one -spec is required (or use -spec-root / -discover to expand specs)", os.Args[0])
 	}
 
@@ -170,7 +173,7 @@ func handleChildrenCommand() {
 	}
 
 	opts := openapi.DiscoverChildrenOptions{
-		Specs:  specs,
+		Specs:  specSources,
 		Parent: *parent,
 		Depth:  1, // Direct children only
 	}
