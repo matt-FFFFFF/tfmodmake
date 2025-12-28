@@ -1,6 +1,6 @@
 # tfmodmake
 
-CLI tool to generate base Terraform configuration from an OpenAPI specification.
+CLI tool to generate a base Terraform module from an OpenAPI specification.
 
 ## Features
 
@@ -10,6 +10,7 @@ CLI tool to generate base Terraform configuration from an OpenAPI specification.
 *   **Computed exports**: Auto-suggest `response_export_values` from read-only/non-writable response fields (with noise filtering).
 *   **Submodule helpers**: `addsub` generates map-based wrapper plumbing for submodules.
 *   **Scope discovery**: `children` lists deployable ARM child resource types under a parent (compact text or `-json`).
+*   **AVM interfaces scaffolding**: Generate `main.interfaces.tf` wiring for common AVM interfaces (role assignments, locks, diagnostic settings, private endpoints, telemetry).
 
 ## Installation
 
@@ -142,9 +143,9 @@ All validations are null-safe for optional fields. See [docs/validations.md](doc
 
 ## Advanced: Child Resource Discovery
 
-See also: [docs/children-discovery.md](docs/children-discovery.md)
-
 The `children` command inspects OpenAPI specs and returns child resource types that can be deployed under a parent resource.
+
+This is a discovery process that does not make any terraform code, it is designed to be used with the submodule subcommand.
 
 ```bash
 ./tfmodmake children -spec <path_or_url> -parent <resource_type> [-json]
@@ -152,17 +153,14 @@ The `children` command inspects OpenAPI specs and returns child resource types t
 
 **Common flags:**
 
-*   `-spec`: (Required, repeatable) Path or URL to OpenAPI specification. Can be specified multiple times to search across versions.
+*   `-spec-root`: (Required, repeatable) Path to OpenAPI specification, see below
 *   `-parent`: (Required) Parent resource type (e.g., `Microsoft.App/managedEnvironments`).
 *   `-json`: (Optional) Output results as JSON instead of plain text.
+*   `-include-preview`: (Optional) Search for preview versions of resources.
 
-**Discovery flags (advanced):**
+`Spec-root` points to the resource manager specification URL, allowing it to enumerate available versions. 
 
-Recommended: use `-spec-root`.
-
-It gives you a deterministic “latest stable” starting point without manually enumerating spec URLs.
-
-Example:
+An example:
 
 ```bash
 ./tfmodmake children \
@@ -171,18 +169,21 @@ Example:
   -parent "Microsoft.App/managedEnvironments"
 ```
 
+Example output:
+
+```text
+Deployable child resources
+- 2025-10-02-preview    Microsoft.App/managedEnvironments/certificates
+- 2025-10-02-preview    Microsoft.App/managedEnvironments/daprComponents
+- 2025-10-02-preview    Microsoft.App/managedEnvironments/daprSubscriptions
+- 2025-10-02-preview    Microsoft.App/managedEnvironments/httpRouteConfigs
+- 2025-10-02-preview    Microsoft.App/managedEnvironments/maintenanceConfigurations
+- 2025-10-02-preview    Microsoft.App/managedEnvironments/managedCertificates
+- 2025-10-02-preview    Microsoft.App/managedEnvironments/privateEndpointConnections
+- 2025-10-02-preview    Microsoft.App/managedEnvironments/storages
+
+Filtered out
+(none)
+```
+
 Other discovery options (details in [docs/children-discovery.md](docs/children-discovery.md)):
-
-- `-discover`: when `-spec` is a `raw.githubusercontent.com` URL, pull in sibling spec files from the same directory.
-- `-include`: restrict which spec files are included during discovery (glob).
-- If you hit GitHub rate limits, set `GITHUB_TOKEN` (or `GH_TOKEN`) and retry.
-
-**Debugging:**
-
-*   `-print-resolved-specs`: (Optional) Print the final resolved spec list to **stderr** before analysis. Useful for diagnosing missing children without polluting stdout/JSON output.
-
-Output shows:
-*   **Deployable Child Resources**: Resources with PUT/PATCH operations and request body schemas
-*   **Filtered Out**: Resources that cannot be deployed (GET-only, missing body schema, etc.) with reasons
-
-Note: the default output is intentionally plain and compact for terminal use. Use `-json` if you want structured output (including example paths) for scripting or deeper inspection.

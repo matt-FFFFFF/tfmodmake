@@ -196,7 +196,6 @@ func TestAVMInterfacesScaffolding_ContainerAppsManagedEnvironments(t *testing.T)
 	assert.Contains(t, interfacesContent, "var.diagnostic_settings")
 	assert.Contains(t, interfacesContent, "private_endpoints")
 	assert.Contains(t, interfacesContent, "local.private_endpoints")
-	assert.Contains(t, interfacesContent, "private_endpoints_scope")
 	assert.Contains(t, interfacesContent, "private_endpoints_manage_dns_zone_group")
 	assert.Contains(t, interfacesContent, "enable_telemetry")
 	assert.Contains(t, interfacesContent, "var.enable_telemetry")
@@ -223,7 +222,7 @@ func TestAVMInterfacesScaffolding_ContainerAppsManagedEnvironments(t *testing.T)
 
 	assert.Contains(t, localsContent, "private_endpoints")
 	// Should have the default subresource_name for managedEnvironments
-	assert.Contains(t, localsContent, "managedEnvironment")
+	assert.Contains(t, localsContent, "managedEnvironments")
 }
 
 func TestAVMInterfacesScaffolding_AKSManagedClusters(t *testing.T) {

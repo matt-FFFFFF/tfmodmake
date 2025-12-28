@@ -318,8 +318,9 @@ func tokensForPrivateEndpointsLocal(resourceType string) hclwrite.Tokens {
 	//   for k, v in var.private_endpoints : k => v
 	// }
 
-	// Look up the default subresource name for this resource type
-	defaultSubresource, hasDefault := privateEndpointSubresourceMap[resourceType]
+	// Look up a default subresource name for this resource type.
+	// Only default when the docs list exactly one possible subresource.
+	defaultSubresource, hasDefault := privateEndpointDefaultSubresource(resourceType)
 
 	varPE := hclgen.TokensForTraversal("var", "private_endpoints")
 

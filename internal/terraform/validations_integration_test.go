@@ -178,8 +178,9 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 	// - allowed_ip_ranges: 3 (min, max, unique)
 	// - capacity: 2 (min, max)
 	// - tier: 1 (x-ms-enum)
-	// Total: 10
-	assert.Equal(t, 10, validationCount, "Should have 10 validation blocks")
+	// - AVM interface variables: 3 (diagnostic_settings: 2, lock: 1)
+	// Total: 13
+	assert.Equal(t, 13, validationCount, "Should have 13 validation blocks")
 
 	t.Logf("Generated %d validation blocks", validationCount)
 }
