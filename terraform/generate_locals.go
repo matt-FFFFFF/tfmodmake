@@ -26,7 +26,10 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 	localBody := locals.Body()
 
 	secretPaths := newSecretPathSet(secrets)
-	valueExpression := constructValue(schema, hclwrite.TokensForIdentifier("var"), true, secretPaths, "", supportsIdentity, moduleNamePrefix)
+	valueExpression, err := constructValue(schema, hclwrite.TokensForIdentifier("var"), true, secretPaths, "", supportsIdentity, moduleNamePrefix)
+	if err != nil {
+		return err
+	}
 	localBody.SetAttributeRaw(localName, valueExpression)
 
 	// Managed identity scaffolding (only when the resource schema supports configuring identity).
@@ -43,19 +46,18 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 	return hclgen.WriteFile("locals.tf", file)
 }
 
-func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, secretPaths map[string]struct{}, moduleNamePrefix string) hclwrite.Tokens {
+func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, secretPaths map[string]struct{}, moduleNamePrefix string) (hclwrite.Tokens, error) {
 	// schema represents the OpenAPI schema at root.properties.
 	// The Terraform variables are flattened to var.<child> rather than var.properties.<child>.
 
 	if schema == nil {
-		return hclwrite.TokensForIdentifier("null")
+		return hclwrite.TokensForIdentifier("null"), nil
 	}
 
 	// Get effective properties for allOf handling
 	effectiveProps, err := openapi.GetEffectiveProperties(schema)
 	if err != nil {
-		// Errors indicate cycles or conflicts which should fail generation
-		panic(fmt.Sprintf("failed to get effective properties in constructFlattenedRootPropertiesValue: %v", err))
+		return nil, fmt.Errorf("failed to get effective properties in constructFlattenedRootPropertiesValue: %w", err)
 	}
 
 	var attrs []hclwrite.ObjectAttrTokens
@@ -92,19 +94,22 @@ func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath h
 		childAccess = append(childAccess, &hclwrite.Token{Type: hclsyntax.TokenDot, Bytes: []byte(".")})
 		childAccess = append(childAccess, hclwrite.TokensForIdentifier(snakeName)...)
 
-		childValue := constructValue(prop.Value, childAccess, false, secretPaths, "properties."+k, false, moduleNamePrefix)
+		childValue, err := constructValue(prop.Value, childAccess, false, secretPaths, "properties."+k, false, moduleNamePrefix)
+		if err != nil {
+			return nil, err
+		}
 		attrs = append(attrs, hclwrite.ObjectAttrTokens{
 			Name:  tokensForObjectKey(k),
 			Value: childValue,
 		})
 	}
 
-	return hclwrite.TokensForObject(attrs)
+	return hclwrite.TokensForObject(attrs), nil
 }
 
-func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot bool, secretPaths map[string]struct{}, pathPrefix string, omitRootIdentity bool, moduleNamePrefix string) hclwrite.Tokens {
+func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot bool, secretPaths map[string]struct{}, pathPrefix string, omitRootIdentity bool, moduleNamePrefix string) (hclwrite.Tokens, error) {
 	if schema.Type == nil {
-		return accessPath
+		return accessPath, nil
 	}
 
 	types := *schema.Type
@@ -112,7 +117,10 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 	if slices.Contains(types, "object") {
 		if len(schema.Properties) == 0 {
 			if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
-				mappedValue := constructValue(schema.AdditionalProperties.Schema.Value, hclwrite.TokensForIdentifier("value"), false, secretPaths, pathPrefix, false, moduleNamePrefix)
+				mappedValue, err := constructValue(schema.AdditionalProperties.Schema.Value, hclwrite.TokensForIdentifier("value"), false, secretPaths, pathPrefix, false, moduleNamePrefix)
+				if err != nil {
+					return nil, err
+				}
 
 				var tokens hclwrite.Tokens
 				tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")})
@@ -129,18 +137,17 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 				tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrace, Bytes: []byte("}")})
 
 				if !isRoot {
-					return hclgen.NullEqualityTernary(accessPath, tokens)
+					return hclgen.NullEqualityTernary(accessPath, tokens), nil
 				}
-				return tokens
+				return tokens, nil
 			}
-			return accessPath // map(string) or free-form, passed as is
+			return accessPath, nil // map(string) or free-form, passed as is
 		}
 
 		// Get effective properties for allOf handling
 		effectiveProps, err := openapi.GetEffectiveProperties(schema)
 		if err != nil {
-			// Errors indicate cycles or conflicts which should fail generation
-			panic(fmt.Sprintf("failed to get effective properties in constructValue: %v", err))
+			return nil, fmt.Errorf("failed to get effective properties in constructValue: %w", err)
 		}
 
 		var attrs []hclwrite.ObjectAttrTokens
@@ -178,7 +185,10 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 
 			// Flatten the top-level "properties" bag into separate variables.
 			if isRoot && k == "properties" && prop.Value.Type != nil && slices.Contains(*prop.Value.Type, "object") && len(prop.Value.Properties) > 0 {
-				childValue := constructFlattenedRootPropertiesValue(prop.Value, accessPath, secretPaths, moduleNamePrefix)
+				childValue, err := constructFlattenedRootPropertiesValue(prop.Value, accessPath, secretPaths, moduleNamePrefix)
+				if err != nil {
+					return nil, err
+				}
 				attrs = append(attrs, hclwrite.ObjectAttrTokens{
 					Name:  tokensForObjectKey(k),
 					Value: childValue,
@@ -192,7 +202,10 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 			childAccess = append(childAccess, &hclwrite.Token{Type: hclsyntax.TokenDot, Bytes: []byte(".")})
 			childAccess = append(childAccess, hclwrite.TokensForIdentifier(snakeName)...)
 
-			childValue := constructValue(prop.Value, childAccess, false, secretPaths, childPath, false, moduleNamePrefix)
+			childValue, err := constructValue(prop.Value, childAccess, false, secretPaths, childPath, false, moduleNamePrefix)
+			if err != nil {
+				return nil, err
+			}
 			attrs = append(attrs, hclwrite.ObjectAttrTokens{
 				Name:  tokensForObjectKey(k),
 				Value: childValue,
@@ -201,14 +214,17 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 
 		objTokens := hclwrite.TokensForObject(attrs)
 		if !isRoot {
-			return hclgen.NullEqualityTernary(accessPath, objTokens)
+			return hclgen.NullEqualityTernary(accessPath, objTokens), nil
 		}
-		return objTokens
+		return objTokens, nil
 	}
 
 	if slices.Contains(types, "array") {
 		if schema.Items != nil && schema.Items.Value != nil {
-			childValue := constructValue(schema.Items.Value, hclwrite.TokensForIdentifier("item"), false, secretPaths, pathPrefix+"[]", false, moduleNamePrefix)
+			childValue, err := constructValue(schema.Items.Value, hclwrite.TokensForIdentifier("item"), false, secretPaths, pathPrefix+"[]", false, moduleNamePrefix)
+			if err != nil {
+				return nil, err
+			}
 
 			var tokens hclwrite.Tokens
 			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")})
@@ -221,14 +237,14 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
 
 			if !isRoot {
-				return hclgen.NullEqualityTernary(accessPath, tokens)
+				return hclgen.NullEqualityTernary(accessPath, tokens), nil
 			}
-			return tokens
+			return tokens, nil
 		}
-		return accessPath
+		return accessPath, nil
 	}
 
-	return accessPath
+	return accessPath, nil
 }
 
 func tokensForManagedIdentitiesLocal() hclwrite.Tokens {

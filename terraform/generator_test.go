@@ -741,7 +741,8 @@ func TestMapType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotTokens := mapType(tt.schema)
+			gotTokens, err := mapType(tt.schema)
+			require.NoError(t, err)
 			got := string(gotTokens.Bytes())
 			assert.Equal(t, tt.want, got)
 		})
@@ -772,7 +773,8 @@ func TestBuildNestedDescription(t *testing.T) {
 		},
 	}
 
-	got := buildNestedDescription(schema, "")
+	got, err := buildNestedDescription(schema, "")
+	require.NoError(t, err)
 	assert.Contains(t, got, "- `prop1` - Description 1")
 	assert.Contains(t, got, "- `nested` - Nested object")
 	assert.Contains(t, got, "  - `child` - Child description")
@@ -807,12 +809,13 @@ func TestConstructValue_MapAdditionalPropertiesObject(t *testing.T) {
 		{Type: hclsyntax.TokenDot, Bytes: []byte(".")},
 		{Type: hclsyntax.TokenIdent, Bytes: []byte("kube_dns_overrides")},
 	}
-	tokens := constructValue(schema, accessPath, false, nil, "", false, "")
+	tokens, err := constructValue(schema, accessPath, false, nil, "", false, "")
+	require.NoError(t, err)
 
 	f := hclwrite.NewEmptyFile()
 	f.Body().SetAttributeRaw("attr", tokens)
 	buf := new(bytes.Buffer)
-	_, err := f.WriteTo(buf)
+	_, err = f.WriteTo(buf)
 	require.NoError(t, err)
 	parsed, diags := hclwrite.ParseConfig(buf.Bytes(), "test.tf", hcl.Pos{Line: 1, Column: 1})
 	require.False(t, diags.HasErrors())

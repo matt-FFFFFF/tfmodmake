@@ -19,23 +19,23 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
-	arrayItemsContainSecret := func(schema *openapi3.Schema) bool {
+	arrayItemsContainSecret := func(schema *openapi3.Schema) (bool, error) {
 		if schema == nil || schema.Type == nil {
-			return false
+			return false, nil
 		}
 		if !slices.Contains(*schema.Type, "array") {
-			return false
+			return false, nil
 		}
 		if schema.Items == nil || schema.Items.Value == nil {
-			return false
+			return false, nil
 		}
 		itemSchema := schema.Items.Value
 		if itemSchema.Type == nil || !slices.Contains(*itemSchema.Type, "object") {
-			return false
+			return false, nil
 		}
 		props, err := openapi.GetEffectiveProperties(itemSchema)
 		if err != nil {
-			panic(fmt.Sprintf("failed to get effective properties for array item schema: %v", err))
+			return false, fmt.Errorf("getting effective properties for array item schema: %w", err)
 		}
 		for _, prop := range props {
 			if prop == nil || prop.Value == nil {
@@ -45,10 +45,10 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 				continue
 			}
 			if isSecretField(prop.Value) {
-				return true
+				return true, nil
 			}
 		}
-		return false
+		return false, nil
 	}
 
 	appendTFLintIgnoreUnused := func() {
@@ -77,7 +77,10 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 			return nil, nil
 		}
 
-		tfType := mapType(propSchema)
+		tfType, err := mapType(propSchema)
+		if err != nil {
+			return nil, err
+		}
 
 		var nestedDocSchema *openapi3.Schema
 		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") {
@@ -112,7 +115,11 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 				sb.WriteString("Map values:\n")
 			}
 
-			sb.WriteString(buildNestedDescription(nestedDocSchema, ""))
+			nested, err := buildNestedDescription(nestedDocSchema, "")
+			if err != nil {
+				return nil, err
+			}
+			sb.WriteString(nested)
 			hclgen.SetDescriptionAttribute(varBody, sb.String())
 		} else {
 			description := propSchema.Description
@@ -139,7 +146,11 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 		// If this is an array of objects that contains secret fields in its items,
 		// mark the whole variable as ephemeral. We currently don't generate array-aware
 		// sensitive_body, so this prevents secrets from persisting in state.
-		if arrayItemsContainSecret(propSchema) {
+		hasSecrets, err := arrayItemsContainSecret(propSchema)
+		if err != nil {
+			return nil, err
+		}
+		if hasSecrets {
 			varBody.SetAttributeValue("ephemeral", cty.True)
 		}
 
@@ -353,10 +364,14 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 			secretBlockAdded = true
 		}
 
+		tfType, err := mapType(secret.schema)
+		if err != nil {
+			return err
+		}
 		secretVarBody := appendVariable(
 			secret.varName,
 			secret.schema.Description,
-			mapType(secret.schema),
+			tfType,
 		)
 
 		seenNames[secret.varName] = struct{}{}
@@ -608,47 +623,53 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 	return hclgen.WriteFile("variables.tf", file)
 }
 
-func mapType(schema *openapi3.Schema) hclwrite.Tokens {
+func mapType(schema *openapi3.Schema) (hclwrite.Tokens, error) {
 	if schema.Type == nil {
-		return hclwrite.TokensForIdentifier("any")
+		return hclwrite.TokensForIdentifier("any"), nil
 	}
 
 	types := *schema.Type
 
 	if slices.Contains(types, "string") {
-		return hclwrite.TokensForIdentifier("string")
+		return hclwrite.TokensForIdentifier("string"), nil
 	}
 	if slices.Contains(types, "integer") || slices.Contains(types, "number") {
-		return hclwrite.TokensForIdentifier("number")
+		return hclwrite.TokensForIdentifier("number"), nil
 	}
 	if slices.Contains(types, "boolean") {
-		return hclwrite.TokensForIdentifier("bool")
+		return hclwrite.TokensForIdentifier("bool"), nil
 	}
 	if slices.Contains(types, "array") {
 		elemType := hclwrite.TokensForIdentifier("any")
 		if schema.Items != nil && schema.Items.Value != nil {
-			elemType = mapType(schema.Items.Value)
+			var err error
+			elemType, err = mapType(schema.Items.Value)
+			if err != nil {
+				return nil, err
+			}
 		}
-		return hclwrite.TokensForFunctionCall("list", elemType)
+		return hclwrite.TokensForFunctionCall("list", elemType), nil
 	}
 	if slices.Contains(types, "object") {
 		// Get effective properties and required for allOf handling
 		effectiveProps, err := openapi.GetEffectiveProperties(schema)
 		if err != nil {
-			// Errors indicate cycles or conflicts which should fail generation
-			panic(fmt.Sprintf("failed to get effective properties: %v", err))
+			return nil, fmt.Errorf("getting effective properties: %w", err)
 		}
 		effectiveRequired, err := openapi.GetEffectiveRequired(schema)
 		if err != nil {
-			panic(fmt.Sprintf("failed to get effective required: %v", err))
+			return nil, fmt.Errorf("getting effective required: %w", err)
 		}
 
 		if len(effectiveProps) == 0 {
 			if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
-				valueType := mapType(schema.AdditionalProperties.Schema.Value)
-				return hclwrite.TokensForFunctionCall("map", valueType)
+				valueType, err := mapType(schema.AdditionalProperties.Schema.Value)
+				if err != nil {
+					return nil, err
+				}
+				return hclwrite.TokensForFunctionCall("map", valueType), nil
 			}
-			return hclwrite.TokensForFunctionCall("map", hclwrite.TokensForIdentifier("string"))
+			return hclwrite.TokensForFunctionCall("map", hclwrite.TokensForIdentifier("string")), nil
 		}
 		var attrs []hclwrite.ObjectAttrTokens
 
@@ -667,7 +688,10 @@ func mapType(schema *openapi3.Schema) hclwrite.Tokens {
 			if !isWritableProperty(prop.Value) {
 				continue
 			}
-			fieldType := mapType(prop.Value)
+			fieldType, err := mapType(prop.Value)
+			if err != nil {
+				return nil, err
+			}
 
 			// Check if optional
 			isOptional := true
@@ -683,20 +707,19 @@ func mapType(schema *openapi3.Schema) hclwrite.Tokens {
 				Value: fieldType,
 			})
 		}
-		return hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject(attrs))
+		return hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject(attrs)), nil
 	}
 
-	return hclwrite.TokensForIdentifier("any")
+	return hclwrite.TokensForIdentifier("any"), nil
 }
 
-func buildNestedDescription(schema *openapi3.Schema, indent string) string {
+func buildNestedDescription(schema *openapi3.Schema, indent string) (string, error) {
 	var sb strings.Builder
 
 	// Get effective properties for allOf handling
 	effectiveProps, err := openapi.GetEffectiveProperties(schema)
 	if err != nil {
-		// Errors indicate cycles or conflicts which should fail generation
-		panic(fmt.Sprintf("failed to get effective properties in buildNestedDescription: %v", err))
+		return "", fmt.Errorf("getting effective properties in buildNestedDescription: %w", err)
 	}
 
 	type keyPair struct {
@@ -741,11 +764,15 @@ func buildNestedDescription(schema *openapi3.Schema, indent string) string {
 		// Check if nested object has properties (considering allOf)
 		nestedProps, err := openapi.GetEffectiveProperties(val)
 		if err != nil {
-			panic(fmt.Sprintf("failed to get effective properties for nested object: %v", err))
+			return "", fmt.Errorf("getting effective properties for nested object: %w", err)
 		}
 		if isNested && len(nestedProps) > 0 {
-			sb.WriteString(buildNestedDescription(val, indent+"  "))
+			nested, err := buildNestedDescription(val, indent+"  ")
+			if err != nil {
+				return "", err
+			}
+			sb.WriteString(nested)
 		}
 	}
-	return sb.String()
+	return sb.String(), nil
 }
