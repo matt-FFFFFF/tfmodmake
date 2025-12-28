@@ -265,6 +265,125 @@ func TestAddAVMInterfaces(t *testing.T) {
 	}
 }
 
+// TestAddAVMInterfacesWithInference tests that `add avm-interfaces` can infer resource type from main.tf
+func TestAddAVMInterfacesWithInference(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// First generate a base module
+	testSpec := map[string]interface{}{
+		"swagger": "2.0",
+		"info": map[string]interface{}{
+			"version": "2024-01-01",
+		},
+		"paths": map[string]interface{}{
+			"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/testResources/{resourceName}": map[string]interface{}{
+				"put": map[string]interface{}{
+					"operationId": "TestResources_CreateOrUpdate",
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "parameters",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/TestResource",
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/TestResource",
+							},
+						},
+					},
+				},
+			},
+		},
+		"definitions": map[string]interface{}{
+			"TestResource": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"properties": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"value": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	specPath := filepath.Join(tmpDir, "test_spec.json")
+	specData, err := json.MarshalIndent(testSpec, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal test spec: %v", err)
+	}
+	if err := os.WriteFile(specPath, specData, 0o644); err != nil {
+		t.Fatalf("Failed to write test spec: %v", err)
+	}
+
+	// Build tfmodmake for testing
+	tfmodmakePath := filepath.Join(t.TempDir(), "tfmodmake")
+	buildCmd := exec.Command("go", "build", "-o", tfmodmakePath, ".")
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build tfmodmake: %v\n%s", err, output)
+	}
+
+	// Generate base module
+	cmd := exec.Command(tfmodmakePath, "-spec", specPath, "-resource", "Microsoft.Test/testResources")
+	cmd.Dir = tmpDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to generate base module: %v\n%s", err, output)
+	}
+
+	// Verify main.tf exists and contains the resource type
+	mainTfPath := filepath.Join(tmpDir, "main.tf")
+	mainTfContent, err := os.ReadFile(mainTfPath)
+	if err != nil {
+		t.Fatalf("Failed to read main.tf: %v", err)
+	}
+	if !strings.Contains(string(mainTfContent), "Microsoft.Test/testResources") {
+		t.Fatalf("main.tf should contain resource type")
+	}
+
+	// Verify main.interfaces.tf does NOT exist yet
+	interfacesPath := filepath.Join(tmpDir, "main.interfaces.tf")
+	if _, err := os.Stat(interfacesPath); !os.IsNotExist(err) {
+		t.Fatalf("main.interfaces.tf should not exist before add avm-interfaces")
+	}
+
+	// Run add avm-interfaces WITHOUT -resource flag (should infer from main.tf)
+	cmd = exec.Command(tfmodmakePath, "add", "avm-interfaces")
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to run add avm-interfaces without -resource flag: %v\n%s", err, output)
+	}
+
+	// Verify main.interfaces.tf was created
+	if _, err := os.Stat(interfacesPath); os.IsNotExist(err) {
+		t.Fatalf("main.interfaces.tf should exist after add avm-interfaces with inference")
+	}
+
+	// Read and verify content contains expected module block
+	content, err := os.ReadFile(interfacesPath)
+	if err != nil {
+		t.Fatalf("Failed to read main.interfaces.tf: %v", err)
+	}
+
+	contentStr := string(content)
+	if !strings.Contains(contentStr, "module \"avm_interfaces\"") {
+		t.Errorf("main.interfaces.tf should contain module block")
+	}
+	if !strings.Contains(contentStr, "source") {
+		t.Errorf("main.interfaces.tf should contain source attribute")
+	}
+}
+
 // TestAddSubmoduleAliasEquivalence tests that both `addsub` and `add submodule` work
 func TestAddSubmoduleAliasEquivalence(t *testing.T) {
 	// Create a minimal dummy submodule
@@ -350,11 +469,103 @@ variable "value" {
 	}
 }
 
-// TestDiscoverChildrenAliasEquivalence tests that both `children` and `discover children` work
+// TestDiscoverChildrenAliasEquivalence tests that both `children` and `discover children` produce identical output
 func TestDiscoverChildrenAliasEquivalence(t *testing.T) {
-	// This test requires actual spec files and network access, so we'll do a simpler
-	// validation that the commands parse correctly and fail with expected error messages
-	// when required args are missing
+	// Create a hermetic test spec with a parent and child resource
+	testSpec := map[string]interface{}{
+		"swagger": "2.0",
+		"info": map[string]interface{}{
+			"version": "2024-01-01",
+		},
+		"paths": map[string]interface{}{
+			// Parent resource
+			"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/parents/{parentName}": map[string]interface{}{
+				"put": map[string]interface{}{
+					"operationId": "Parents_CreateOrUpdate",
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "parameters",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Parent",
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Parent",
+							},
+						},
+					},
+				},
+			},
+			// Child resource
+			"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/parents/{parentName}/children/{childName}": map[string]interface{}{
+				"put": map[string]interface{}{
+					"operationId": "Children_CreateOrUpdate",
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "parameters",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Child",
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Child",
+							},
+						},
+					},
+				},
+			},
+		},
+		"definitions": map[string]interface{}{
+			"Parent": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"properties": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"value": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+				},
+			},
+			"Child": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"properties": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"childValue": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tmpDir := t.TempDir()
+	specPath := filepath.Join(tmpDir, "test_spec.json")
+	specData, err := json.MarshalIndent(testSpec, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal test spec: %v", err)
+	}
+	if err := os.WriteFile(specPath, specData, 0o644); err != nil {
+		t.Fatalf("Failed to write test spec: %v", err)
+	}
 
 	// Build tfmodmake for testing
 	tfmodmakePath := filepath.Join(t.TempDir(), "tfmodmake")
@@ -363,25 +574,61 @@ func TestDiscoverChildrenAliasEquivalence(t *testing.T) {
 		t.Fatalf("Failed to build tfmodmake: %v\n%s", err, output)
 	}
 
-	// Test legacy children command fails with expected error when args missing
-	cmd := exec.Command(tfmodmakePath, "children")
-	output, err := cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("Expected children command to fail without required args")
-	}
-	outputStr := string(output)
-	if !strings.Contains(outputStr, "parent") || !strings.Contains(outputStr, "required") {
-		t.Logf("Expected error about missing parent arg, got: %s", outputStr)
+	// Test legacy children command
+	legacyCmd := exec.Command(tfmodmakePath, "children", "-spec", specPath, "-parent", "Microsoft.Test/parents", "-json")
+	legacyOutput, err := legacyCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to run legacy children command: %v\n%s", err, legacyOutput)
 	}
 
-	// Test new discover children command fails with expected error when args missing
-	cmd = exec.Command(tfmodmakePath, "discover", "children")
-	output, err = cmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("Expected discover children command to fail without required args")
+	// Test new discover children command
+	newCmd := exec.Command(tfmodmakePath, "discover", "children", "-spec", specPath, "-parent", "Microsoft.Test/parents", "-json")
+	newOutput, err := newCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to run discover children command: %v\n%s", err, newOutput)
 	}
-	outputStr = string(output)
-	if !strings.Contains(outputStr, "parent") || !strings.Contains(outputStr, "required") {
-		t.Logf("Expected error about missing parent arg, got: %s", outputStr)
+
+	// Parse both outputs as JSON to compare
+	var legacyResult interface{}
+	var newResult interface{}
+
+	if err := json.Unmarshal(legacyOutput, &legacyResult); err != nil {
+		t.Fatalf("Failed to parse legacy output as JSON: %v\nOutput: %s", err, legacyOutput)
+	}
+
+	if err := json.Unmarshal(newOutput, &newResult); err != nil {
+		t.Fatalf("Failed to parse new output as JSON: %v\nOutput: %s", err, newOutput)
+	}
+
+	// Compare the results by re-marshaling to ensure consistent formatting
+	legacyJSON, err := json.MarshalIndent(legacyResult, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to re-marshal legacy result: %v", err)
+	}
+
+	newJSON, err := json.MarshalIndent(newResult, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to re-marshal new result: %v", err)
+	}
+
+	if string(legacyJSON) != string(newJSON) {
+		t.Errorf("Output differs between 'children' and 'discover children'\nLegacy:\n%s\n\nNew:\n%s", legacyJSON, newJSON)
+	}
+
+	// Also test text output mode (non-JSON)
+	legacyTextCmd := exec.Command(tfmodmakePath, "children", "-spec", specPath, "-parent", "Microsoft.Test/parents")
+	legacyTextOutput, err := legacyTextCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to run legacy children command (text mode): %v\n%s", err, legacyTextOutput)
+	}
+
+	newTextCmd := exec.Command(tfmodmakePath, "discover", "children", "-spec", specPath, "-parent", "Microsoft.Test/parents")
+	newTextOutput, err := newTextCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to run discover children command (text mode): %v\n%s", err, newTextOutput)
+	}
+
+	if string(legacyTextOutput) != string(newTextOutput) {
+		t.Errorf("Text output differs between 'children' and 'discover children'\nLegacy:\n%s\n\nNew:\n%s", legacyTextOutput, newTextOutput)
 	}
 }
