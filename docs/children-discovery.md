@@ -128,3 +128,13 @@ Managed Environments (latest stable + preview):
 ```
 
 If GitHub directory listing is rate-limited, you can always fall back to explicit `-spec` URLs (more manual, but no directory API calls).
+
+**Debugging:**
+
+*   `-print-resolved-specs`: (Optional) Print the final resolved spec list to **stderr** before analysis. Useful for diagnosing missing children without polluting stdout/JSON output.
+
+Output shows:
+*   **Deployable Child Resources**: Resources with PUT/PATCH operations and request body schemas
+*   **Filtered Out**: Resources that cannot be deployed (GET-only, missing body schema, etc.) with reasons
+
+Note: the default output is intentionally plain and compact for terminal use. Use `-json` if you want structured output (including example paths) for scripting or deeper inspection.

@@ -171,15 +171,16 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 
 	// Count total validations
 	validationCount := strings.Count(varsContent, "validation {")
-	// Expected: 
+	// Expected:
 	// - sku: 1 (enum)
 	// - resource_name: 2 (min, max)
 	// - correlation_id: 1 (uuid)
 	// - allowed_ip_ranges: 3 (min, max, unique)
 	// - capacity: 2 (min, max)
 	// - tier: 1 (x-ms-enum)
-	// Total: 10
-	assert.Equal(t, 10, validationCount, "Should have 10 validation blocks")
+	// - AVM interface variables: 3 (diagnostic_settings: 2, lock: 1)
+	// Total: 13
+	assert.Equal(t, 13, validationCount, "Should have 13 validation blocks")
 
 	t.Logf("Generated %d validation blocks", validationCount)
 }
@@ -187,12 +188,12 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 // extractVariableBlock extracts the content of a specific variable block from the file
 func extractVariableBlock(t *testing.T, content, varName string) string {
 	t.Helper()
-	
+
 	start := strings.Index(content, `variable "`+varName+`"`)
 	if start == -1 {
 		return ""
 	}
-	
+
 	// Find the closing brace
 	braceCount := 0
 	inBlock := false
@@ -209,7 +210,7 @@ func extractVariableBlock(t *testing.T, content, varName string) string {
 			}
 		}
 	}
-	
+
 	if end > start {
 		return content[start:end]
 	}

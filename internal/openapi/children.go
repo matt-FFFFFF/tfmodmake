@@ -12,18 +12,18 @@ var apiVersionRegex = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}(?:-preview)?)`)
 
 // ChildResource represents a discovered child resource type.
 type ChildResource struct {
-	ResourceType         string   // e.g. "Microsoft.App/managedEnvironments/certificates"
-	ExamplePaths         []string // Example instance paths
-	Operations           []string // HTTP methods available (GET, PUT, PATCH, DELETE)
-	IsDeployable         bool     // Whether this resource can be deployed
-	DeployabilityReason  string   // Reason if not deployable
-	APIVersion           string   // API version where this was found
+	ResourceType        string   // e.g. "Microsoft.App/managedEnvironments/certificates"
+	ExamplePaths        []string // Example instance paths
+	Operations          []string // HTTP methods available (GET, PUT, PATCH, DELETE)
+	IsDeployable        bool     // Whether this resource can be deployed
+	DeployabilityReason string   // Reason if not deployable
+	APIVersion          string   // API version where this was found
 }
 
 // ChildrenResult holds the result of child resource discovery.
 type ChildrenResult struct {
-	Deployable   []ChildResource // Resources that can be deployed
-	FilteredOut  []ChildResource // Resources that were filtered out with reasons
+	Deployable  []ChildResource // Resources that can be deployed
+	FilteredOut []ChildResource // Resources that were filtered out with reasons
 }
 
 // DiscoverChildrenOptions holds options for child discovery.

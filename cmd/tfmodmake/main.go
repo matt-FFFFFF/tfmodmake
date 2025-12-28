@@ -146,7 +146,7 @@ func handleChildrenCommand() {
 
 	resolver := defaultSpecResolver{}
 	resolveReq := ResolveRequest{
-		Seeds:            specs,
+		Seeds:             specs,
 		GitHubServiceRoot: *specRoot,
 		DiscoverFromSeed:  *discoverFromSpec,
 		IncludeGlobs:      includeGlobs,

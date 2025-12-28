@@ -6,18 +6,18 @@ import "strings"
 // fully-qualified resource type (provider + type segments) and the final instance segment.
 //
 // Examples:
-// - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/widgets/{widgetName}
-//   -> ("Microsoft.Test/widgets", "widgetName", true)
-// - .../providers/Microsoft.Test/widgets/{widgetName}/child/{childName}
-//   -> ("Microsoft.Test/widgets/child", "childName", true)
+//   - /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/widgets/{widgetName}
+//     -> ("Microsoft.Test/widgets", "widgetName", true)
+//   - .../providers/Microsoft.Test/widgets/{widgetName}/child/{childName}
+//     -> ("Microsoft.Test/widgets/child", "childName", true)
 //
 // It returns ok=false if the path is not a canonical instance path.
 //
 // Notes:
-// - Most ARM instance paths alternate fixed type segments and parameterized instance names.
-// - Some Azure resources use a fixed singleton instance name (e.g. .../blobServices/default).
-// - Nested "/providers/{namespace}" segments (extension resources) are intentionally rejected by
-//   this helper; it only models the common single-provider path shape used in most specs.
+//   - Most ARM instance paths alternate fixed type segments and parameterized instance names.
+//   - Some Azure resources use a fixed singleton instance name (e.g. .../blobServices/default).
+//   - Nested "/providers/{namespace}" segments (extension resources) are intentionally rejected by
+//     this helper; it only models the common single-provider path shape used in most specs.
 func azureARMInstancePathInfo(path string) (resourceType string, nameParam string, ok bool) {
 	trimmed := strings.Trim(path, "/")
 	if trimmed == "" {

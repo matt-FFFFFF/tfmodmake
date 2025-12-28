@@ -47,10 +47,10 @@ func TestFormatChildrenAsText(t *testing.T) {
 			FilteredOut: []ChildResource{},
 		}
 
-			text := FormatChildrenAsText(result)
+		text := FormatChildrenAsText(result)
 
-			assert.Contains(t, text, "Deployable child resources")
-			assert.Contains(t, text, "(none)")
+		assert.Contains(t, text, "Deployable child resources")
+		assert.Contains(t, text, "(none)")
 	})
 
 	t.Run("handles nil result", func(t *testing.T) {

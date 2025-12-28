@@ -30,7 +30,7 @@ type githubLocation struct {
 }
 
 type deterministicDiscoveryOptions struct {
-	PreferPreview bool
+	PreferPreview  bool
 	IncludePreview bool
 }
 

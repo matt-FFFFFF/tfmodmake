@@ -13,7 +13,7 @@ func TestDedupeResolvedSpecsPreserveOrder(t *testing.T) {
 		{Source: "b", Origin: "seed"},
 		{Source: "a", Origin: "discover"},
 		{Source: "c", Origin: "discover"},
-			{Source: "b", Origin: "spec-root"},
+		{Source: "b", Origin: "spec-root"},
 	}
 
 	out := dedupeResolvedSpecsPreserveOrder(specs)

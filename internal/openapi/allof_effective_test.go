@@ -92,13 +92,13 @@ func TestGetEffectiveProperties_CycleDetection(t *testing.T) {
 
 	// Create A→B→A cycle
 	schemaA := &openapi3.Schema{
-		Type:   &openapi3.Types{"object"},
-		AllOf:  []*openapi3.SchemaRef{},
+		Type:  &openapi3.Types{"object"},
+		AllOf: []*openapi3.SchemaRef{},
 	}
 
 	schemaB := &openapi3.Schema{
-		Type:   &openapi3.Types{"object"},
-		AllOf:  []*openapi3.SchemaRef{{Value: schemaA}},
+		Type:  &openapi3.Types{"object"},
+		AllOf: []*openapi3.SchemaRef{{Value: schemaA}},
 	}
 
 	schemaA.AllOf = []*openapi3.SchemaRef{{Value: schemaB}}

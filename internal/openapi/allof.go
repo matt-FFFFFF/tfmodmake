@@ -49,7 +49,7 @@ func getEffectivePropertiesRecursive(schema *openapi3.Schema, cache map[*openapi
 
 	// Merge properties from allOf components
 	result := make(map[string]*openapi3.SchemaRef)
-	
+
 	// Add base schema properties
 	for name, propRef := range schema.Properties {
 		result[name] = propRef
@@ -87,7 +87,7 @@ func getEffectivePropertiesRecursive(schema *openapi3.Schema, cache map[*openapi
 						if originIdx >= 0 {
 							originDesc = fmt.Sprintf("allOf component %d", originIdx)
 						}
-						
+
 						// Build detailed error message
 						return nil, fmt.Errorf(
 							"conflicting definitions for property %q in allOf:\n"+
@@ -152,7 +152,7 @@ func getEffectiveRequiredRecursive(schema *openapi3.Schema, cache map[*openapi3.
 
 	// Union required fields from all components
 	requiredSet := make(map[string]struct{})
-	
+
 	// Add base schema required fields
 	for _, req := range schema.Required {
 		requiredSet[req] = struct{}{}
