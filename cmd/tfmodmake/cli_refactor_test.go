@@ -725,8 +725,8 @@ func TestGenAVM(t *testing.T) {
 		t.Errorf("main.interfaces.tf should exist after gen avm")
 	}
 
-	// Verify child modules were created
-	childModules := []string{"childOnes", "childTwos"}
+	// Verify child modules were created (module names are derived from resource type and normalized)
+	childModules := []string{"child_ones", "child_twos"}
 	for _, childMod := range childModules {
 		modulePath := filepath.Join(tmpDir, "modules", childMod)
 		if _, err := os.Stat(modulePath); os.IsNotExist(err) {
@@ -745,10 +745,10 @@ func TestGenAVM(t *testing.T) {
 
 	// Verify wrapper files were created for each child
 	wrapperFiles := []string{
-		"variables.childones.tf",
-		"main.childones.tf",
-		"variables.childtwos.tf",
-		"main.childtwos.tf",
+		"variables.child_ones.tf",
+		"main.child_ones.tf",
+		"variables.child_twos.tf",
+		"main.child_twos.tf",
 	}
 	for _, file := range wrapperFiles {
 		path := filepath.Join(tmpDir, file)

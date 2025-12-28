@@ -1017,6 +1017,96 @@ func TestGenerate_WithSecretFields(t *testing.T) {
 	assert.Contains(t, sensitiveBodyVersionExpr, "var.api_key_version")
 }
 
+func TestGenerate_ArraySecretItems_TreatedAsSingleSecretArray(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
+
+	schema := &openapi3.Schema{
+		Type: &openapi3.Types{"object"},
+		Properties: map[string]*openapi3.SchemaRef{
+			"properties": {
+				Value: &openapi3.Schema{
+					Type: &openapi3.Types{"object"},
+					Properties: map[string]*openapi3.SchemaRef{
+						"normalField": {
+							Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
+						},
+						"secrets": {
+							Value: &openapi3.Schema{
+								Type: &openapi3.Types{"array"},
+								Items: &openapi3.SchemaRef{
+									Value: &openapi3.Schema{
+										Type: &openapi3.Types{"object"},
+										Properties: map[string]*openapi3.SchemaRef{
+											"name": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
+											"value": {
+												Value: &openapi3.Schema{
+													Type: &openapi3.Types{"string"},
+													Extensions: map[string]any{
+														"x-ms-secret": true,
+													},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", false, false, nil)
+	require.NoError(t, err)
+
+	varsBody := parseHCLBody(t, "variables.tf")
+
+	secretsVar := requireBlock(t, varsBody, "variable", "secrets")
+	ephemeralAttr := secretsVar.Body.Attributes["ephemeral"]
+	require.NotNil(t, ephemeralAttr, "secrets should have ephemeral attribute")
+	val, diags := ephemeralAttr.Expr.Value(nil)
+	require.False(t, diags.HasErrors())
+	assert.True(t, val.True(), "ephemeral should be true")
+
+	secretsVersionVar := requireBlock(t, varsBody, "variable", "secrets_version")
+	assert.Equal(t, "number", expressionString(t, secretsVersionVar.Body.Attributes["type"].Expr))
+	validationBlock := findBlock(secretsVersionVar.Body, "validation")
+	require.NotNil(t, validationBlock, "secrets_version should have validation")
+	conditionExpr := expressionString(t, validationBlock.Body.Attributes["condition"].Expr)
+	assert.Contains(t, conditionExpr, "var.secrets")
+	assert.Contains(t, conditionExpr, "var.secrets_version")
+
+	localsBody := parseHCLBody(t, "locals.tf")
+	localsBlock := requireBlock(t, localsBody, "locals")
+	localExpr := expressionString(t, localsBlock.Body.Attributes["resource_body"].Expr)
+	assert.Contains(t, localExpr, "normalField = var.normal_field")
+	assert.NotContains(t, localExpr, "secrets")
+
+	mainBody := parseHCLBody(t, "main.tf")
+	resourceBlock := requireBlock(t, mainBody, "resource", "azapi_resource", "this")
+
+	sensitiveBodyAttr := resourceBlock.Body.Attributes["sensitive_body"]
+	require.NotNil(t, sensitiveBodyAttr)
+	sensitiveBodyExpr := expressionString(t, sensitiveBodyAttr.Expr)
+	assert.Contains(t, sensitiveBodyExpr, "properties")
+	assert.Contains(t, sensitiveBodyExpr, "secrets")
+	assert.Contains(t, sensitiveBodyExpr, "var.secrets")
+
+	sensitiveBodyVersionAttr := resourceBlock.Body.Attributes["sensitive_body_version"]
+	require.NotNil(t, sensitiveBodyVersionAttr)
+	sensitiveBodyVersionExpr := expressionString(t, sensitiveBodyVersionAttr.Expr)
+	assert.Contains(t, sensitiveBodyVersionExpr, "properties.secrets")
+	assert.Contains(t, sensitiveBodyVersionExpr, "var.secrets_version")
+}
+
 func TestGenerate_ResponseExportValues(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -1123,8 +1213,8 @@ func TestGenerate_ResponseExportValues(t *testing.T) {
 	require.NoError(t, err)
 	mainContent := string(mainBytes)
 
-	// Check for the comment about trimming
-	assert.Contains(t, mainContent, "Trim response_export_values")
+	// Ensure we don't emit additional guidance comments in generated output.
+	assert.NotContains(t, mainContent, "Trim response_export_values")
 }
 
 func TestGenerate_ResponseExportValuesWithBlocklist(t *testing.T) {

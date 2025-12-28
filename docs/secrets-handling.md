@@ -41,7 +41,7 @@ The `collectSecretFields` function traverses the OpenAPI schema recursively to d
 
 - **Root-level properties**: Direct properties in the schema
 - **Nested objects**: Properties within complex object types
-- **Array items**: Object properties within array item schemas
+- **Array items**: Supported coarsely by treating the entire array property as secret-bearing when any item field is secret (see "Known Issue: Secrets Inside Arrays" below)
 - **Deep nesting**: Recursively processes all levels
 
 Example schema structure:
@@ -490,7 +490,7 @@ Tests that:
 - ✅ Deeply nested secrets are detected
 - ✅ Correct JSON paths are generated
 - ✅ Tree-based `sensitive_body` structure is correct
-- ✅ Array item secrets are handled properly
+- ⚠️ Secrets inside array items are not currently supported (see below)
 
 ### TestIsSecretField
 
@@ -591,3 +591,39 @@ Secret detection is performed during generation (not runtime):
 - Fast path for schemas without secrets (early return)
 
 The tree-based rendering is O(n) where n is the number of secrets, with minimal allocation overhead.
+
+## Known Issue: Secrets Inside Arrays
+
+Some Azure resource schemas place secret fields inside arrays of objects (for example, `properties.secrets[].value` or `properties.components[].secret`).
+
+### What went wrong
+
+`tfmodmake` builds `azapi_resource.sensitive_body` as an object-shaped structure keyed by JSON path segments. When we attempted to represent array element paths naively (by appending `[]` to the path), the generator could emit invalid HCL object keys such as `"secrets[]"`.
+
+Even if we avoided invalid keys, correctly supporting array secrets requires Terraform list comprehensions (and usually a way to correlate secrets with the correct element). Version tracking (`sensitive_body_version`) also becomes ambiguous without a stable identifier per array element.
+
+### Current behavior (mitigation)
+
+- If an input variable is an array and any of the item schema fields are marked as secret, `tfmodmake` treats the *entire array property* as a single secret-bearing field.
+- The array variable is marked `ephemeral = true`, excluded from the regular `body`, and emitted under `sensitive_body` at the array property path (e.g., `properties.secrets`).
+- A single `<var>_version` variable is generated, and `sensitive_body_version` is keyed by the array property path.
+
+This prevents secrets from being persisted to state and avoids invalid HCL keys (like `secrets[]`), but it is intentionally coarse-grained: non-secret fields within each element also become part of the sensitive payload.
+
+### Suggested resolution
+
+There are two plausible paths forward:
+
+1. **Coarse-grained support (simplest):**
+  - Treat the entire array variable as a single secret-bearing input.
+  - Keep it `ephemeral`, and add a single `<var>_version` number to force updates when any element’s secret changes.
+  - This avoids per-element mapping complexity, at the cost of less granular lifecycle control.
+
+2. **Array-aware sensitive_body (preferred, but requires structure):**
+  - When the array item schema contains a stable key field (commonly `name`, sometimes `id`), split the inputs into:
+    - a non-secret list of objects (regular `body`), and
+    - a separate map of secret values keyed by that stable identifier.
+  - Generate `sensitive_body` using a list comprehension that merges secret fields back into the correct element.
+  - Generate `sensitive_body_version` keyed by the same stable identifier so users can rotate secrets deterministically.
+
+If no stable key exists in the item schema, array-aware merging and per-element versioning are not reliable; in that case, the coarse-grained approach is the safer default.

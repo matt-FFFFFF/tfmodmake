@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
 	"github.com/zclconf/go-cty/cty"
@@ -104,9 +103,7 @@ func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName s
 
 		// Add a reminder comment after the resource block.
 		// This placement makes it stand out to users who should customize the exports.
-		body.AppendUnstructuredTokens(hclwrite.Tokens{
-			{Type: hclsyntax.TokenComment, Bytes: []byte("\n# Trim response_export_values to only the computed fields you need.\n")},
-		})
+		// Intentionally do not emit guidance comments in generated output.
 	} else {
 		resourceBody.SetAttributeValue("response_export_values", cty.ListValEmpty(cty.String))
 	}
