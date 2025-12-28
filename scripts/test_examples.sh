@@ -9,8 +9,16 @@ if ! command -v terraform >/dev/null 2>&1; then
 fi
 
 TFMODMAKE_BIN="$(mktemp -t tfmodmake.XXXXXX)"
+
+WORKDIRS=()
 cleanup() {
   rm -f "$TFMODMAKE_BIN"
+
+  for dir in "${WORKDIRS[@]:-}"; do
+    if [[ -n "${dir}" && -d "${dir}" ]]; then
+      rm -rf "${dir}"
+    fi
+  done
 }
 trap cleanup EXIT
 
@@ -25,6 +33,7 @@ run_case() {
 
   local workdir
   workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
+  WORKDIRS+=("$workdir")
 
   (cd "$workdir" && "$TFMODMAKE_BIN" -spec "$spec" -resource "$resource" >/dev/null)
   (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
@@ -38,6 +47,7 @@ run_keyvault_case() {
 
   local workdir
   workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
+  WORKDIRS+=("$workdir")
 
   mkdir -p "$workdir/modules/secrets"
 
@@ -61,7 +71,7 @@ run_keyvault_case() {
   )
 
   # Parent module wrapper generation for secrets submodule
-  (cd "$workdir" && "$TFMODMAKE_BIN" addsub modules/secrets >/dev/null)
+  (cd "$workdir" && "$TFMODMAKE_BIN" add submodule modules/secrets >/dev/null)
 
   (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
   (cd "$workdir" && terraform validate -no-color >/dev/null)
