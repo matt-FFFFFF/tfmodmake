@@ -65,29 +65,29 @@ func isArraySchema(schema *openapi3.Schema) bool {
 	return schema.Items != nil
 }
 
-func schemaContainsSecretFields(schema *openapi3.Schema) bool {
+func schemaContainsSecretFields(schema *openapi3.Schema) (bool, error) {
 	if schema == nil {
-		return false
+		return false, nil
 	}
 
 	if isSecretField(schema) {
-		return true
+		return true, nil
 	}
 
 	if isArraySchema(schema) {
 		if schema.Items == nil || schema.Items.Value == nil {
-			return false
+			return false, nil
 		}
 		return schemaContainsSecretFields(schema.Items.Value)
 	}
 
 	if schema.Type == nil || !slices.Contains(*schema.Type, "object") {
-		return false
+		return false, nil
 	}
 
 	props, err := openapi.GetEffectiveProperties(schema)
 	if err != nil {
-		panic(fmt.Sprintf("failed to get effective properties while scanning for secret fields: %v", err))
+		return false, fmt.Errorf("getting effective properties while scanning for secret fields: %w", err)
 	}
 
 	for _, prop := range props {
@@ -97,25 +97,33 @@ func schemaContainsSecretFields(schema *openapi3.Schema) bool {
 		if !isWritableProperty(prop.Value) {
 			continue
 		}
-		if schemaContainsSecretFields(prop.Value) {
-			return true
+		hasSecrets, err := schemaContainsSecretFields(prop.Value)
+		if err != nil {
+			return false, err
+		}
+		if hasSecrets {
+			return true, nil
 		}
 	}
 
 	if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
-		if schemaContainsSecretFields(schema.AdditionalProperties.Schema.Value) {
-			return true
+		hasSecrets, err := schemaContainsSecretFields(schema.AdditionalProperties.Schema.Value)
+		if err != nil {
+			return false, err
+		}
+		if hasSecrets {
+			return true, nil
 		}
 	}
 
-	return false
+	return false, nil
 }
 
 // collectSecretFields traverses the schema and collects all fields marked with x-ms-secret.
-func collectSecretFields(schema *openapi3.Schema, pathPrefix string) []secretField {
+func collectSecretFields(schema *openapi3.Schema, pathPrefix string) ([]secretField, error) {
 	var secrets []secretField
 	if schema == nil {
-		return secrets
+		return secrets, nil
 	}
 
 	var keys []string
@@ -156,19 +164,28 @@ func collectSecretFields(schema *openapi3.Schema, pathPrefix string) []secretFie
 		//   - generating a single <var>_version for lifecycle forcing, and
 		//   - avoiding invalid HCL keys like "secrets[]".
 		if !isSecretField(propSchema) && isArraySchema(propSchema) {
-			if propSchema.Items != nil && propSchema.Items.Value != nil && schemaContainsSecretFields(propSchema.Items.Value) {
-				secrets = append(secrets, secretField{
-					path:    currentPath,
-					varName: naming.ToSnakeCase(name),
-					schema:  propSchema,
-				})
-				continue
+			if propSchema.Items != nil && propSchema.Items.Value != nil {
+				hasSecrets, err := schemaContainsSecretFields(propSchema.Items.Value)
+				if err != nil {
+					return nil, err
+				}
+				if hasSecrets {
+					secrets = append(secrets, secretField{
+						path:    currentPath,
+						varName: naming.ToSnakeCase(name),
+						schema:  propSchema,
+					})
+					continue
+				}
 			}
 		}
 
 		// Recursively check nested objects
 		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propSchema.Properties) > 0 {
-			nested := collectSecretFields(propSchema, currentPath)
+			nested, err := collectSecretFields(propSchema, currentPath)
+			if err != nil {
+				return nil, err
+			}
 			secrets = append(secrets, nested...)
 		}
 
@@ -177,7 +194,7 @@ func collectSecretFields(schema *openapi3.Schema, pathPrefix string) []secretFie
 		// This avoids invalid keys like "secrets[]" while still keeping secrets out of `body`.
 	}
 
-	return secrets
+	return secrets, nil
 }
 
 func newSecretPathSet(secrets []secretField) map[string]struct{} {

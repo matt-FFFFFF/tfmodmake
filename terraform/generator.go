@@ -2,6 +2,8 @@
 package terraform
 
 import (
+	"fmt"
+
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 )
@@ -30,7 +32,11 @@ func GenerateWithContext(schema *openapi3.Schema, resourceType string, localName
 	// Collect secret fields from schema
 	var secrets []secretField
 	if hasSchema {
-		secrets = collectSecretFields(schema, "")
+		var err error
+		secrets, err = collectSecretFields(schema, "")
+		if err != nil {
+			return fmt.Errorf("collecting secret fields: %w", err)
+		}
 	}
 
 	if err := generateTerraform(); err != nil {
