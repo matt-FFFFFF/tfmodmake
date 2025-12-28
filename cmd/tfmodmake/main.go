@@ -17,32 +17,134 @@ import (
 )
 
 func main() {
+	// Handle subcommands
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "gen":
+			handleGenCommand()
+			return
+		case "add":
+			handleAddCommand()
+			return
+		case "discover":
+			handleDiscoverCommand()
+			return
+		// Legacy aliases for backward compatibility
+		case "addsub":
+			handleAddSubCommand()
+			return
+		case "addchild":
+			handleAddChildCommand()
+			return
+		case "children":
+			handleChildrenCommand()
+			return
+		}
+	}
+
+	// Default: base module generation (same as 'gen' with no subcommand)
+	handleDefaultGeneration()
+}
+
+func handleGenCommand() {
+	if len(os.Args) > 2 {
+		switch os.Args[2] {
+		case "submodule":
+			// tfmodmake gen submodule - handled by addchild logic
+			handleAddChildCommand()
+			return
+		}
+	}
+
+	// tfmodmake gen - same as default generation
+	// Remove "gen" from args so flag parsing works correctly
+	os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+	handleDefaultGeneration()
+}
+
+func handleAddCommand() {
+	if len(os.Args) < 3 {
+		log.Fatalf("Usage: %s add <subcommand>\nAvailable subcommands: submodule, avm-interfaces", os.Args[0])
+	}
+
+	switch os.Args[2] {
+	case "submodule":
+		handleAddSubCommand()
+	case "avm-interfaces":
+		handleAddAVMInterfacesCommand()
+	default:
+		log.Fatalf("Unknown add subcommand: %s\nAvailable subcommands: submodule, avm-interfaces", os.Args[2])
+	}
+}
+
+func handleDiscoverCommand() {
+	if len(os.Args) < 3 {
+		log.Fatalf("Usage: %s discover <subcommand>\nAvailable subcommands: children", os.Args[0])
+	}
+
+	switch os.Args[2] {
+	case "children":
+		handleChildrenCommand()
+	default:
+		log.Fatalf("Unknown discover subcommand: %s\nAvailable subcommands: children", os.Args[2])
+	}
+}
+
+func handleAddSubCommand() {
+	// Parse args differently based on how we got here
+	var args []string
 	if len(os.Args) > 1 && os.Args[1] == "addsub" {
+		// Legacy: tfmodmake addsub <path>
 		addSub := flag.NewFlagSet("addsub", flag.ExitOnError)
 		if err := addSub.Parse(os.Args[2:]); err != nil {
 			log.Fatalf("Failed to parse addsub arguments: %v", err)
 		}
-		args := addSub.Args()
-		if len(args) != 1 {
-			log.Fatalf("Usage: %s addsub <path>", os.Args[0])
+		args = addSub.Args()
+	} else {
+		// New: tfmodmake add submodule <path>
+		addSub := flag.NewFlagSet("add submodule", flag.ExitOnError)
+		if err := addSub.Parse(os.Args[3:]); err != nil {
+			log.Fatalf("Failed to parse add submodule arguments: %v", err)
 		}
-		if err := submodule.Generate(args[0]); err != nil {
-			log.Fatalf("Failed to add submodule: %v", err)
+		args = addSub.Args()
+	}
+
+	if len(args) != 1 {
+		log.Fatalf("Usage: %s add submodule <path>", os.Args[0])
+	}
+	if err := submodule.Generate(args[0]); err != nil {
+		log.Fatalf("Failed to add submodule: %v", err)
+	}
+	fmt.Println("Successfully generated submodule wrapper files")
+}
+
+func handleAddAVMInterfacesCommand() {
+	// tfmodmake add avm-interfaces
+	addAVMCmd := flag.NewFlagSet("add avm-interfaces", flag.ExitOnError)
+	resourceType := addAVMCmd.String("resource", "", "Resource type (if not inferrable from existing files)")
+
+	if err := addAVMCmd.Parse(os.Args[3:]); err != nil {
+		log.Fatalf("Failed to parse add avm-interfaces arguments: %v", err)
+	}
+
+	// If resource type not provided, try to infer from existing main.tf
+	finalResourceType := *resourceType
+	if finalResourceType == "" {
+		inferred, err := inferResourceTypeFromMainTf()
+		if err != nil {
+			log.Fatalf("Failed to infer resource type: %v\nPlease provide -resource flag", err)
 		}
-		fmt.Println("Successfully generated submodule wrapper files")
-		return
+		finalResourceType = inferred
 	}
 
-	if len(os.Args) > 1 && os.Args[1] == "addchild" {
-		handleAddChildCommand()
-		return
+	if err := terraform.GenerateInterfacesFile(finalResourceType); err != nil {
+		log.Fatalf("Failed to generate AVM interfaces: %v", err)
 	}
 
-	if len(os.Args) > 1 && os.Args[1] == "children" {
-		handleChildrenCommand()
-		return
-	}
+	fmt.Println("Successfully generated main.interfaces.tf")
+}
 
+func handleDefaultGeneration() {
 	specPath := flag.String("spec", "", "Path or URL to the OpenAPI specification")
 	resourceType := flag.String("resource", "", "Resource type to generate Terraform configuration for (e.g. Microsoft.ContainerService/managedClusters)")
 	rootPath := flag.String("root", "", "Path to the root object (e.g. properties or properties.foo)")
@@ -121,7 +223,23 @@ func (s *stringSliceFlag) Set(value string) error {
 }
 
 func handleChildrenCommand() {
-	childrenCmd := flag.NewFlagSet("children", flag.ExitOnError)
+	// Determine the command name and adjust args based on how we got here
+	var cmdName string
+	var argsOffset int
+	
+	if len(os.Args) > 1 && os.Args[1] == "children" {
+		// Legacy: tfmodmake children ...
+		cmdName = "children"
+		argsOffset = 2
+	} else if len(os.Args) > 2 && os.Args[1] == "discover" && os.Args[2] == "children" {
+		// New: tfmodmake discover children ...
+		cmdName = "discover children"
+		argsOffset = 3
+	} else {
+		log.Fatalf("Unexpected command structure for children")
+	}
+
+	childrenCmd := flag.NewFlagSet(cmdName, flag.ExitOnError)
 
 	var specs stringSliceFlag
 	childrenCmd.Var(&specs, "spec", "Path or URL to OpenAPI spec (can be specified multiple times)")
@@ -133,7 +251,7 @@ func handleChildrenCommand() {
 	jsonOutput := childrenCmd.Bool("json", false, "Output results as JSON instead of markdown")
 	printResolvedSpecs := childrenCmd.Bool("print-resolved-specs", false, "Print the resolved spec list to stderr before analysis")
 
-	if err := childrenCmd.Parse(os.Args[2:]); err != nil {
+	if err := childrenCmd.Parse(os.Args[argsOffset:]); err != nil {
 		log.Fatalf("Failed to parse children arguments: %v", err)
 	}
 
@@ -203,7 +321,23 @@ func handleChildrenCommand() {
 }
 
 func handleAddChildCommand() {
-	addChildCmd := flag.NewFlagSet("addchild", flag.ExitOnError)
+	// Determine command name and args offset based on how we got here
+	var cmdName string
+	var argsOffset int
+	
+	if len(os.Args) > 1 && os.Args[1] == "addchild" {
+		// Legacy: tfmodmake addchild ...
+		cmdName = "addchild"
+		argsOffset = 2
+	} else if len(os.Args) > 2 && os.Args[1] == "gen" && os.Args[2] == "submodule" {
+		// New: tfmodmake gen submodule ...
+		cmdName = "gen submodule"
+		argsOffset = 3
+	} else {
+		log.Fatalf("Unexpected command structure for addchild/gen submodule")
+	}
+
+	addChildCmd := flag.NewFlagSet(cmdName, flag.ExitOnError)
 
 	var specs stringSliceFlag
 	addChildCmd.Var(&specs, "spec", "Path or URL to OpenAPI spec (can be specified multiple times)")
@@ -216,22 +350,22 @@ func handleAddChildCommand() {
 	moduleName := addChildCmd.String("module-name", "", "Override derived module folder name")
 	dryRun := addChildCmd.Bool("dry-run", false, "Print planned actions without writing files")
 
-	if err := addChildCmd.Parse(os.Args[2:]); err != nil {
-		log.Fatalf("Failed to parse addchild arguments: %v", err)
+	if err := addChildCmd.Parse(os.Args[argsOffset:]); err != nil {
+		log.Fatalf("Failed to parse %s arguments: %v", cmdName, err)
 	}
 
-	const addChildUsage = "Usage: %s addchild -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]"
+	const addChildUsage = "Usage: %s %s -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]"
 
 	if *parent == "" {
-		log.Fatalf(addChildUsage+"\n-parent is required", os.Args[0])
+		log.Fatalf(addChildUsage+"\n-parent is required", os.Args[0], cmdName)
 	}
 
 	if *child == "" {
-		log.Fatalf(addChildUsage+"\n-child is required", os.Args[0])
+		log.Fatalf(addChildUsage+"\n-child is required", os.Args[0], cmdName)
 	}
 
 	if len(specs) == 0 && *specRoot == "" {
-		log.Fatalf(addChildUsage+"\nAt least one -spec or -spec-root is required", os.Args[0])
+		log.Fatalf(addChildUsage+"\nAt least one -spec or -spec-root is required", os.Args[0], cmdName)
 	}
 
 	githubToken := githubTokenFromEnv()
@@ -442,4 +576,33 @@ func defaultDiscoveryGlobsForParent(parentType string) []string {
 	// Common ARM spec files are PascalCase, e.g. ManagedEnvironments*.json.
 	pascal := strings.ToUpper(last[:1]) + last[1:]
 	return []string{pascal + "*.json", "*.json"}
+}
+
+// inferResourceTypeFromMainTf attempts to read the resource type from an existing main.tf file.
+func inferResourceTypeFromMainTf() (string, error) {
+	data, err := os.ReadFile("main.tf")
+	if err != nil {
+		return "", fmt.Errorf("could not read main.tf: %w", err)
+	}
+
+	// Look for type = "..." in azapi_resource block
+	// This is a simple string search approach
+	content := string(data)
+	lines := strings.Split(content, "\n")
+	
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "type") && strings.Contains(trimmed, "=") {
+			// Extract the value between quotes
+			parts := strings.Split(trimmed, "\"")
+			if len(parts) >= 2 {
+				resourceType := parts[1]
+				if strings.Contains(resourceType, "Microsoft.") {
+					return resourceType, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("could not find resource type in main.tf")
 }

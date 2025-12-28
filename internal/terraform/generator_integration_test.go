@@ -173,6 +173,10 @@ func TestAVMInterfacesScaffolding_ContainerAppsManagedEnvironments(t *testing.T)
 	err = Generate(schema, "Microsoft.App/managedEnvironments", "resource_body", apiVersion, supportsTags, supportsLocation, nil)
 	require.NoError(t, err)
 
+	// Generate AVM interfaces explicitly (since it's no longer included in base generation)
+	err = GenerateInterfacesFile("Microsoft.App/managedEnvironments")
+	require.NoError(t, err)
+
 	// Check that main.interfaces.tf was generated
 	interfacesBytes, err := os.ReadFile("main.interfaces.tf")
 	require.NoError(t, err)
@@ -258,6 +262,10 @@ func TestAVMInterfacesScaffolding_AKSManagedClusters(t *testing.T) {
 	apiVersion := doc.Info.Version
 
 	err = Generate(schema, "Microsoft.ContainerService/managedClusters", "resource_body", apiVersion, supportsTags, supportsLocation, nil)
+	require.NoError(t, err)
+
+	// Generate AVM interfaces explicitly (since it's no longer included in base generation)
+	err = GenerateInterfacesFile("Microsoft.ContainerService/managedClusters")
 	require.NoError(t, err)
 
 	// Check that main.interfaces.tf was generated
