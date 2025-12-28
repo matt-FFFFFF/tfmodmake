@@ -175,6 +175,7 @@ func handleAddSubCommand() {
 func handleAddAVMInterfacesCommand() {
 	// tfmodmake add avm-interfaces [path]
 	addAVMCmd := flag.NewFlagSet("add avm-interfaces", flag.ExitOnError)
+	specPath := addAVMCmd.String("spec-path", "", "Optional: Path to OpenAPI spec file (URL or local path) for capability detection")
 
 	if err := addAVMCmd.Parse(os.Args[3:]); err != nil {
 		log.Fatalf("Failed to parse add avm-interfaces arguments: %v", err)
@@ -205,7 +206,17 @@ func handleAddAVMInterfacesCommand() {
 		log.Fatalf("Failed to infer resource type from main.tf: %v\nEnsure main.tf exists in %s", err, targetDir)
 	}
 
-	if err := terraform.GenerateInterfacesFile(finalResourceType); err != nil {
+	// Load spec if provided for capability detection
+	var doc *openapi3.T
+	if *specPath != "" {
+		doc, err = openapi.LoadSpec(*specPath)
+		if err != nil {
+			log.Fatalf("Failed to load spec: %v", err)
+		}
+	}
+	// If no spec provided, doc will be nil and no interface capabilities will be detected
+
+	if err := terraform.GenerateInterfacesFile(finalResourceType, doc); err != nil {
 		log.Fatalf("Failed to generate AVM interfaces: %v", err)
 	}
 
@@ -276,7 +287,7 @@ func handleDefaultGeneration() {
 		finalLocalName = naming.ToSnakeCase(finalLocalName)
 	}
 
-	if err := terraform.Generate(schema, *resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, nameSchema); err != nil {
+	if err := terraform.Generate(schema, *resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, nameSchema, doc); err != nil {
 		log.Fatalf("Failed to generate terraform files: %v", err)
 	}
 
@@ -548,19 +559,20 @@ func generateChildModule(specs []string, childType, modulePath string) error {
 	var apiVersion string
 	var supportsTags bool
 	var supportsLocation bool
+	var doc *openapi3.T
 
 	var loadErrors []string
 	var searchErrors []string
 
 	for _, specPath := range specs {
-		doc, err := openapi.LoadSpec(specPath)
+		loadedDoc, err := openapi.LoadSpec(specPath)
 		if err != nil {
 			loadErrors = append(loadErrors, fmt.Sprintf("- %s: %v", specPath, err))
 			continue // Try next spec
 		}
 
 		// Try to find the child resource in this spec
-		foundSchema, err := openapi.FindResource(doc, childType)
+		foundSchema, err := openapi.FindResource(loadedDoc, childType)
 		if err != nil {
 			searchErrors = append(searchErrors, fmt.Sprintf("- %s: %v", specPath, err))
 			continue // Try next spec
@@ -568,14 +580,15 @@ func generateChildModule(specs []string, childType, modulePath string) error {
 
 		// Found the resource!
 		schema = foundSchema
+		doc = loadedDoc
 
 		// Get API version
-		if doc.Info != nil {
-			apiVersion = doc.Info.Version
+		if loadedDoc.Info != nil {
+			apiVersion = loadedDoc.Info.Version
 		}
 
 		// Get name schema
-		nameSchema, _ = openapi.FindResourceNameSchema(doc, childType)
+		nameSchema, _ = openapi.FindResourceNameSchema(loadedDoc, childType)
 
 		// Apply writability overrides
 		openapi.AnnotateSchemaRefOrigins(schema)
@@ -605,7 +618,7 @@ func generateChildModule(specs []string, childType, modulePath string) error {
 	// We need to temporarily change directory because terraform.Generate writes to the current directory
 	if err := generateInDirectory(modulePath, func() error {
 		localName := "resource_body"
-		return terraform.Generate(schema, childType, localName, apiVersion, supportsTags, supportsLocation, nameSchema)
+		return terraform.Generate(schema, childType, localName, apiVersion, supportsTags, supportsLocation, nameSchema, doc)
 	}); err != nil {
 		return fmt.Errorf("failed to generate terraform files: %w", err)
 	}
@@ -830,7 +843,20 @@ func orchestrateAVMGeneration(specSources []string, resourceType, rootPath, loca
 
 	// Step 4: Generate AVM interfaces
 	fmt.Println("Step 4/4: Generating AVM interfaces...")
-	if err := terraform.GenerateInterfacesFile(resourceType); err != nil {
+	// Load the spec for capability detection (reuse the logic from generateBaseModule)
+	var doc *openapi3.T
+	for _, specPath := range specSources {
+		loadedDoc, err := openapi.LoadSpec(specPath)
+		if err != nil {
+			continue
+		}
+		// Verify this spec contains the resource
+		if _, err := openapi.FindResource(loadedDoc, resourceType); err == nil {
+			doc = loadedDoc
+			break
+		}
+	}
+	if err := terraform.GenerateInterfacesFile(resourceType, doc); err != nil {
 		return fmt.Errorf("failed to generate AVM interfaces: %w", err)
 	}
 
@@ -854,20 +880,21 @@ func generateBaseModule(specSources []string, resourceType, rootPath, localName 
 	var apiVersion string
 	var supportsTags bool
 	var supportsLocation bool
+	var doc *openapi3.T
 
 	// Find the resource in the specs
 	var loadErrors []string
 	var searchErrors []string
 
 	for _, specPath := range specSources {
-		doc, err := openapi.LoadSpec(specPath)
+		loadedDoc, err := openapi.LoadSpec(specPath)
 		if err != nil {
 			loadErrors = append(loadErrors, fmt.Sprintf("- %s: %v", specPath, err))
 			continue
 		}
 
 		// Try to find the resource in this spec
-		foundSchema, err := openapi.FindResource(doc, resourceType)
+		foundSchema, err := openapi.FindResource(loadedDoc, resourceType)
 		if err != nil {
 			searchErrors = append(searchErrors, fmt.Sprintf("- %s: %v", specPath, err))
 			continue
@@ -875,14 +902,15 @@ func generateBaseModule(specSources []string, resourceType, rootPath, localName 
 
 		// Found the resource!
 		schema = foundSchema
+		doc = loadedDoc
 
 		// Get API version
-		if doc.Info != nil {
-			apiVersion = doc.Info.Version
+		if loadedDoc.Info != nil {
+			apiVersion = loadedDoc.Info.Version
 		}
 
 		// Get name schema
-		nameSchema, _ = openapi.FindResourceNameSchema(doc, resourceType)
+		nameSchema, _ = openapi.FindResourceNameSchema(loadedDoc, resourceType)
 
 		// Apply writability overrides
 		openapi.AnnotateSchemaRefOrigins(schema)
@@ -927,5 +955,5 @@ func generateBaseModule(specSources []string, resourceType, rootPath, localName 
 	}
 
 	// Generate Terraform files
-	return terraform.Generate(schema, resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, nameSchema)
+	return terraform.Generate(schema, resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, nameSchema, doc)
 }

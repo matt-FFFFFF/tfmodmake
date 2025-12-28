@@ -3,6 +3,7 @@ package terraform
 import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
 	"github.com/zclconf/go-cty/cty"
 	"strings"
 )
@@ -106,7 +107,8 @@ func privateEndpointDefaultSubresource(resourceType string) (string, bool) {
 }
 
 // generateInterfaces creates main.interfaces.tf with the AVM interfaces module wiring.
-func generateInterfaces(resourceType string) error {
+// Only includes interface wiring for capabilities with swagger evidence.
+func generateInterfaces(resourceType string, caps openapi.InterfaceCapabilities) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -121,14 +123,28 @@ func generateInterfaces(resourceType string) error {
 	moduleBody.SetAttributeRaw("parent_id", hclgen.TokensForTraversal("var", "parent_id"))
 	moduleBody.SetAttributeRaw("this_resource_id", hclgen.TokensForTraversal("azapi_resource", "this", "id"))
 
-	// Pass interface inputs
-	moduleBody.SetAttributeRaw("role_assignments", hclgen.TokensForTraversal("var", "role_assignments"))
-	moduleBody.SetAttributeRaw("lock", hclgen.TokensForTraversal("var", "lock"))
-	moduleBody.SetAttributeRaw("diagnostic_settings", hclgen.TokensForTraversal("var", "diagnostic_settings"))
-	moduleBody.SetAttributeRaw("private_endpoints", hclgen.TokensForTraversal("local", "private_endpoints"))
-	moduleBody.SetAttributeRaw("private_endpoints_manage_dns_zone_group", hclgen.TokensForTraversal("var", "private_endpoints_manage_dns_zone_group"))
+	// Always include telemetry and location (basic AVM requirements)
 	moduleBody.SetAttributeRaw("enable_telemetry", hclgen.TokensForTraversal("var", "enable_telemetry"))
 	moduleBody.SetAttributeRaw("location", hclgen.TokensForTraversal("var", "location"))
+
+	// Only wire private endpoints if swagger indicates support
+	if caps.SupportsPrivateEndpoints {
+		moduleBody.SetAttributeRaw("private_endpoints", hclgen.TokensForTraversal("local", "private_endpoints"))
+		moduleBody.SetAttributeRaw("private_endpoints_manage_dns_zone_group", hclgen.TokensForTraversal("var", "private_endpoints_manage_dns_zone_group"))
+	}
+
+	// Only wire diagnostic settings if swagger indicates support
+	if caps.SupportsDiagnostics {
+		moduleBody.SetAttributeRaw("diagnostic_settings", hclgen.TokensForTraversal("var", "diagnostic_settings"))
+	}
+
+	// Only wire customer managed key if swagger indicates support
+	if caps.SupportsCustomerManagedKey {
+		moduleBody.SetAttributeRaw("customer_managed_key", hclgen.TokensForTraversal("var", "customer_managed_key"))
+	}
+
+	// Note: Lock and role_assignments are ARM-level capabilities not reliably detectable from specs.
+	// They are intentionally omitted. Use a separate helper command to add them if needed.
 
 	return hclgen.WriteFile("main.interfaces.tf", file)
 }

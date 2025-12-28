@@ -13,7 +13,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string) error {
+func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string, caps openapi.InterfaceCapabilities) error {
 	if schema == nil {
 		return nil
 	}
@@ -34,7 +34,10 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 	}
 
 	// Private endpoints local with opinionated defaults for subresource_name
-	localBody.SetAttributeRaw("private_endpoints", tokensForPrivateEndpointsLocal(resourceType))
+	// Only generate when swagger indicates private endpoint support
+	if caps.SupportsPrivateEndpoints {
+		localBody.SetAttributeRaw("private_endpoints", tokensForPrivateEndpointsLocal(resourceType))
+	}
 
 	return hclgen.WriteFile("locals.tf", file)
 }
