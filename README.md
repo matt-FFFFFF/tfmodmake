@@ -48,13 +48,18 @@ Generate a base Terraform module:
 
 ### AVM Interfaces Scaffolding
 
-Generate `main.interfaces.tf` for AVM interfaces (opt-in):
+Generate `main.interfaces.tf` for AVM interfaces (opt-in). This command infers the resource type from an existing `main.tf` file:
 
 ```bash
-./tfmodmake add avm-interfaces [-resource <resource_type>]
+./tfmodmake add avm-interfaces [path]
 ```
 
-This command creates/overwrites `main.interfaces.tf` in the current module directory. If `-resource` is not provided, it attempts to infer the resource type from the existing `main.tf` file.
+*   `path`: (Optional) Path to the module directory containing `main.tf`. Defaults to the current directory.
+
+The command will:
+1. Read the `main.tf` file in the specified directory
+2. Infer the resource type from the `azapi_resource` block
+3. Generate `main.interfaces.tf` with AVM interface wiring
 
 **Example:**
 
@@ -63,8 +68,11 @@ This command creates/overwrites `main.interfaces.tf` in the current module direc
 ./tfmodmake gen -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json \
   -resource Microsoft.ContainerService/managedClusters
 
-# Optionally add AVM interfaces scaffolding
-./tfmodmake add avm-interfaces -resource Microsoft.ContainerService/managedClusters
+# Add AVM interfaces scaffolding (from current directory)
+./tfmodmake add avm-interfaces
+
+# Or specify a path to a different module
+./tfmodmake add avm-interfaces path/to/module
 ```
 
 ### Submodule Wrapper Generation

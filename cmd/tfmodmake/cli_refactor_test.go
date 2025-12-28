@@ -225,9 +225,8 @@ func TestAddAVMInterfaces(t *testing.T) {
 		t.Fatalf("main.interfaces.tf should not exist before add avm-interfaces")
 	}
 
-	// Run add avm-interfaces
-	cmd = exec.Command(tfmodmakePath, "add", "avm-interfaces", "-resource", "Microsoft.Test/testResources")
-	cmd.Dir = tmpDir
+	// Run add avm-interfaces with path argument (infers resource type from main.tf)
+	cmd = exec.Command(tfmodmakePath, "add", "avm-interfaces", tmpDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to run add avm-interfaces: %v\n%s", err, output)
 	}
@@ -253,8 +252,7 @@ func TestAddAVMInterfaces(t *testing.T) {
 	}
 
 	// Test idempotency - run again
-	cmd = exec.Command(tfmodmakePath, "add", "avm-interfaces", "-resource", "Microsoft.Test/testResources")
-	cmd.Dir = tmpDir
+	cmd = exec.Command(tfmodmakePath, "add", "avm-interfaces", tmpDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to run add avm-interfaces second time (idempotency test): %v\n%s", err, output)
 	}
@@ -265,7 +263,7 @@ func TestAddAVMInterfaces(t *testing.T) {
 	}
 }
 
-// TestAddAVMInterfacesWithInference tests that `add avm-interfaces` can infer resource type from main.tf
+// TestAddAVMInterfacesWithInference tests that `add avm-interfaces` can infer resource type from main.tf in current directory
 func TestAddAVMInterfacesWithInference(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -356,12 +354,12 @@ func TestAddAVMInterfacesWithInference(t *testing.T) {
 		t.Fatalf("main.interfaces.tf should not exist before add avm-interfaces")
 	}
 
-	// Run add avm-interfaces WITHOUT -resource flag (should infer from main.tf)
+	// Run add avm-interfaces WITHOUT path argument (should use current directory behavior)
 	cmd = exec.Command(tfmodmakePath, "add", "avm-interfaces")
 	cmd.Dir = tmpDir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to run add avm-interfaces without -resource flag: %v\n%s", err, output)
+		t.Fatalf("Failed to run add avm-interfaces without path argument: %v\n%s", err, output)
 	}
 
 	// Verify main.interfaces.tf was created

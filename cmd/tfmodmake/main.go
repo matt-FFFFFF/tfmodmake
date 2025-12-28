@@ -27,7 +27,7 @@ Commands:
   gen                    Generate base module
   gen submodule          Generate a child/submodule and wire it into parent
   add submodule <path>   Generate wrapper for an existing submodule
-  add avm-interfaces     Generate main.interfaces.tf (opt-in AVM scaffolding)
+  add avm-interfaces [path]  Generate main.interfaces.tf (infers resource from main.tf)
   discover children      List deployable child resource types
 
 Flags for base generation (default / gen):
@@ -47,8 +47,11 @@ Examples:
   # Generate base module (explicit form)
   tfmodmake gen -spec <url> -resource Microsoft.ContainerService/managedClusters
 
-  # Add AVM interfaces scaffolding
-  tfmodmake add avm-interfaces -resource Microsoft.ContainerService/managedClusters
+  # Add AVM interfaces scaffolding (infers resource type from main.tf in current directory)
+  tfmodmake add avm-interfaces
+
+  # Add AVM interfaces scaffolding to a specific directory
+  tfmodmake add avm-interfaces path/to/module
 
   # Generate wrapper for existing submodule
   tfmodmake add submodule modules/secrets
@@ -165,22 +168,36 @@ func handleAddSubCommand() {
 }
 
 func handleAddAVMInterfacesCommand() {
-	// tfmodmake add avm-interfaces
+	// tfmodmake add avm-interfaces [path]
 	addAVMCmd := flag.NewFlagSet("add avm-interfaces", flag.ExitOnError)
-	resourceType := addAVMCmd.String("resource", "", "Resource type (if not inferrable from existing files)")
 
 	if err := addAVMCmd.Parse(os.Args[3:]); err != nil {
 		log.Fatalf("Failed to parse add avm-interfaces arguments: %v", err)
 	}
 
-	// If resource type not provided, try to infer from existing main.tf
-	finalResourceType := *resourceType
-	if finalResourceType == "" {
-		inferred, err := inferResourceTypeFromMainTf()
-		if err != nil {
-			log.Fatalf("Failed to infer resource type: %v\nPlease provide -resource flag", err)
-		}
-		finalResourceType = inferred
+	// Get optional path argument (defaults to current directory)
+	targetDir := "."
+	args := addAVMCmd.Args()
+	if len(args) > 0 {
+		targetDir = args[0]
+	}
+
+	// Save current directory to restore later
+	originalDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get current directory: %v", err)
+	}
+
+	// Change to target directory
+	if err := os.Chdir(targetDir); err != nil {
+		log.Fatalf("Failed to change to directory %s: %v", targetDir, err)
+	}
+	defer os.Chdir(originalDir)
+
+	// Infer resource type from main.tf (required)
+	finalResourceType, err := inferResourceTypeFromMainTf()
+	if err != nil {
+		log.Fatalf("Failed to infer resource type from main.tf: %v\nEnsure main.tf exists in %s", err, targetDir)
 	}
 
 	if err := terraform.GenerateInterfacesFile(finalResourceType); err != nil {
