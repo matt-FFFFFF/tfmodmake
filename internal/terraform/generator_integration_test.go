@@ -194,12 +194,8 @@ func TestAVMInterfacesScaffolding_ContainerAppsManagedEnvironments(t *testing.T)
 	assert.Contains(t, interfacesContent, "var.parent_id")
 
 	// Should pass interface inputs
-	assert.Contains(t, interfacesContent, "role_assignments")
-	assert.Contains(t, interfacesContent, "var.role_assignments")
-	assert.Contains(t, interfacesContent, "lock")
-	assert.Contains(t, interfacesContent, "var.lock")
-	assert.Contains(t, interfacesContent, "diagnostic_settings")
-	assert.Contains(t, interfacesContent, "var.diagnostic_settings")
+	// Note: role_assignments, lock, and diagnostic_settings are only wired when capabilities detect them
+	// This resource has SupportsPrivateEndpoints=true, so private_endpoints should be wired
 	assert.Contains(t, interfacesContent, "private_endpoints")
 	assert.Contains(t, interfacesContent, "local.private_endpoints")
 	assert.Contains(t, interfacesContent, "private_endpoints_manage_dns_zone_group")
@@ -214,9 +210,8 @@ func TestAVMInterfacesScaffolding_ContainerAppsManagedEnvironments(t *testing.T)
 	variablesContent := string(variablesBytes)
 
 	assert.Contains(t, variablesContent, "variable \"enable_telemetry\"")
-	assert.Contains(t, variablesContent, "variable \"diagnostic_settings\"")
-	assert.Contains(t, variablesContent, "variable \"role_assignments\"")
-	assert.Contains(t, variablesContent, "variable \"lock\"")
+	// diagnostic_settings, role_assignments, and lock are only generated when capabilities are detected
+	// This spec has SupportsPrivateEndpoints=true, so private_endpoints should be generated
 	assert.Contains(t, variablesContent, "variable \"private_endpoints\"")
 	assert.Contains(t, variablesContent, "variable \"private_endpoints_manage_dns_zone_group\"")
 	assert.Contains(t, variablesContent, "variable \"location\"")
