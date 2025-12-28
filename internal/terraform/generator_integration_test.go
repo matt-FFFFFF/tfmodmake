@@ -72,8 +72,8 @@ func TestResponseExportValues_ContainerAppsManagedEnvironments(t *testing.T) {
 	assert.Contains(t, mainContent, "properties.provisioningState")
 	assert.Contains(t, mainContent, "identity.principalId")
 
-	// Should have the comment about trimming
-	assert.Contains(t, mainContent, "Trim response_export_values")
+	// Should NOT include guidance comment about trimming
+	assert.NotContains(t, mainContent, "Trim response_export_values")
 
 	// Should NOT contain array-indexed paths (blocklist)
 	// Note: We can't check for specific array paths since the spec may not have them,

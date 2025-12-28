@@ -217,7 +217,7 @@ func handleDefaultGeneration() {
 	genCmd.Usage = func() {
 		printUsage()
 	}
-	
+
 	specPath := genCmd.String("spec", "", "Path or URL to the OpenAPI specification")
 	resourceType := genCmd.String("resource", "", "Resource type to generate Terraform configuration for (e.g. Microsoft.ContainerService/managedClusters)")
 	rootPath := genCmd.String("root", "", "Path to the root object (e.g. properties or properties.foo)")
@@ -299,7 +299,7 @@ func handleChildrenCommand() {
 	// Determine the command name and adjust args based on how we got here
 	var cmdName string
 	var argsOffset int
-	
+
 	if len(os.Args) > 1 && os.Args[1] == "children" {
 		// Legacy: tfmodmake children ...
 		cmdName = "children"
@@ -397,7 +397,7 @@ func handleAddChildCommand() {
 	// Determine command name and args offset based on how we got here
 	var cmdName string
 	var argsOffset int
-	
+
 	if len(os.Args) > 1 && os.Args[1] == "addchild" {
 		// Legacy: tfmodmake addchild ...
 		cmdName = "addchild"
@@ -528,10 +528,11 @@ func deriveModuleName(childType string) string {
 	// Get the last segment
 	lastSlash := strings.LastIndex(normalized, "/")
 	if lastSlash == -1 {
-		return normalized
+		return naming.ToSnakeCase(normalized)
 	}
 
-	return normalized[lastSlash+1:]
+	segment := normalized[lastSlash+1:]
+	return naming.ToSnakeCase(segment)
 }
 
 // generateChildModule generates a child module scaffold at the specified path.
@@ -662,7 +663,7 @@ func inferResourceTypeFromMainTf() (string, error) {
 	// This is a simple string search approach
 	content := string(data)
 	lines := strings.Split(content, "\n")
-	
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "type") && strings.Contains(trimmed, "=") {
@@ -799,6 +800,14 @@ func orchestrateAVMGeneration(specSources []string, resourceType, rootPath, loca
 	if len(result.Deployable) > 0 {
 		fmt.Println("Step 3/4: Generating child submodules...")
 		for i, child := range result.Deployable {
+			// Some child resource types are managed via AVM interfaces on the parent module.
+			// For example, private endpoints are configured through the interfaces module and
+			// should not be generated as a standalone child submodule.
+			if isInterfaceManagedChild(child.ResourceType) {
+				fmt.Printf("  [%d/%d] Skipping interface-managed child %s\n", i+1, len(result.Deployable), child.ResourceType)
+				continue
+			}
+
 			fmt.Printf("  [%d/%d] Generating submodule for %s...\n", i+1, len(result.Deployable), child.ResourceType)
 
 			// Derive module name from child type
@@ -826,6 +835,16 @@ func orchestrateAVMGeneration(specSources []string, resourceType, rootPath, loca
 	}
 
 	return nil
+}
+
+func isInterfaceManagedChild(childResourceType string) bool {
+	// Today, the only known interface-managed child we want to suppress is Private Endpoint Connections.
+	// The interfaces module handles private endpoints through the `private_endpoints` input.
+	last := childResourceType
+	if idx := strings.LastIndex(childResourceType, "/"); idx >= 0 {
+		last = childResourceType[idx+1:]
+	}
+	return strings.EqualFold(last, "privateEndpointConnections")
 }
 
 // generateBaseModule generates the base module files in the current directory

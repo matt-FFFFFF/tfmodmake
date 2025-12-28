@@ -39,7 +39,7 @@ The `collectSecretFields` function traverses the OpenAPI schema recursively to d
 
 - **Root-level properties**: Direct properties in the schema
 - **Nested objects**: Properties within complex object types
-- **Array items**: Object properties within array item schemas
+- **Array items**: Coarse-grained: if any item field is secret, the entire array property is treated as secret-bearing
 - **Deep nesting**: Recursively processes all levels
 
 Example schema structure:

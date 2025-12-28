@@ -48,6 +48,15 @@ Generate configuration for Container Apps Managed Environment:
   -resource Microsoft.App/managedEnvironments
 ```
 
+Generate a full AVM-style module (base module + child submodules + `main.interfaces.tf`) for Container Apps Managed Environment:
+
+```bash
+./tfmodmake gen avm \
+  -spec-root "https://github.com/Azure/azure-rest-api-specs/tree/main/specification/app/resource-manager/Microsoft.App/ContainerApps" \
+  -include-preview \
+  -resource Microsoft.App/managedEnvironments
+```
+
 Generate configuration for Azure Kubernetes Service (AKS):
 
 ```bash
