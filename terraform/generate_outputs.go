@@ -7,6 +7,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -150,7 +151,7 @@ func outputNameForExportPath(path string) string {
 		if seg == "" {
 			continue
 		}
-		nameSegments = append(nameSegments, toSnakeCase(seg))
+		nameSegments = append(nameSegments, naming.ToSnakeCase(seg))
 	}
 	if len(nameSegments) == 0 {
 		return ""

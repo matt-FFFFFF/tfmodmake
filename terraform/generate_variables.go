@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -292,7 +293,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 					if !isWritableProperty(childSchema) {
 						continue
 					}
-					tfName := toSnakeCase(ck)
+					tfName := naming.ToSnakeCase(ck)
 					if tfName == "" {
 						return fmt.Errorf("could not derive terraform variable name for properties.%s", ck)
 					}
@@ -315,7 +316,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 			// If "properties" isn't a concrete object, fall back to the old behavior.
 		}
 
-		tfName := toSnakeCase(name)
+		tfName := naming.ToSnakeCase(name)
 		if tfName == "" {
 			return fmt.Errorf("could not derive terraform variable name for %s", name)
 		}
@@ -678,7 +679,7 @@ func mapType(schema *openapi3.Schema) hclwrite.Tokens {
 				fieldType = hclwrite.TokensForFunctionCall("optional", fieldType)
 			}
 			attrs = append(attrs, hclwrite.ObjectAttrTokens{
-				Name:  hclwrite.TokensForIdentifier(toSnakeCase(k)),
+				Name:  hclwrite.TokensForIdentifier(naming.ToSnakeCase(k)),
 				Value: fieldType,
 			})
 		}
@@ -704,7 +705,7 @@ func buildNestedDescription(schema *openapi3.Schema, indent string) string {
 	}
 	var childKeys []keyPair
 	for k := range effectiveProps {
-		childKeys = append(childKeys, keyPair{original: k, snake: toSnakeCase(k)})
+		childKeys = append(childKeys, keyPair{original: k, snake: naming.ToSnakeCase(k)})
 	}
 	sort.Slice(childKeys, func(i, j int) bool {
 		return childKeys[i].snake < childKeys[j].snake

@@ -8,6 +8,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 )
 
@@ -141,7 +142,7 @@ func collectSecretFields(schema *openapi3.Schema, pathPrefix string) []secretFie
 		if isSecretField(propSchema) {
 			secrets = append(secrets, secretField{
 				path:    currentPath,
-				varName: toSnakeCase(name),
+				varName: naming.ToSnakeCase(name),
 				schema:  propSchema,
 			})
 		}
@@ -158,7 +159,7 @@ func collectSecretFields(schema *openapi3.Schema, pathPrefix string) []secretFie
 			if propSchema.Items != nil && propSchema.Items.Value != nil && schemaContainsSecretFields(propSchema.Items.Value) {
 				secrets = append(secrets, secretField{
 					path:    currentPath,
-					varName: toSnakeCase(name),
+					varName: naming.ToSnakeCase(name),
 					schema:  propSchema,
 				})
 				continue

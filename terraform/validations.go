@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -68,7 +69,7 @@ func generateNestedObjectValidations(varBody *hclwrite.Body, tfName string, objS
 	}
 	var keys []keyPair
 	for k := range effectiveProps {
-		snake := toSnakeCase(k)
+		snake := naming.ToSnakeCase(k)
 		if snake == "" {
 			continue
 		}

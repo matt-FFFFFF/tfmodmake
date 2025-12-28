@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -81,7 +82,7 @@ func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath h
 			}
 		}
 
-		snakeName := toSnakeCase(k)
+		snakeName := naming.ToSnakeCase(k)
 		// Rename variables that conflict with Terraform module meta-arguments
 		if moduleNamePrefix != "" && snakeName == "version" {
 			snakeName = moduleNamePrefix + "_version"
@@ -185,7 +186,7 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 				continue
 			}
 
-			snakeName := toSnakeCase(k)
+			snakeName := naming.ToSnakeCase(k)
 			var childAccess hclwrite.Tokens
 			childAccess = append(childAccess, accessPath...)
 			childAccess = append(childAccess, &hclwrite.Token{Type: hclsyntax.TokenDot, Bytes: []byte(".")})

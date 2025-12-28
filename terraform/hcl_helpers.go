@@ -4,13 +4,8 @@ import (
 	"unicode"
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
-	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/zclconf/go-cty/cty"
 )
-
-func toSnakeCase(input string) string {
-	return naming.ToSnakeCase(input)
-}
 
 func isHCLIdentifier(s string) bool {
 	if s == "" {

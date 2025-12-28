@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zclconf/go-cty/cty"
@@ -37,7 +38,7 @@ func TestToSnakeCase(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := toSnakeCase(tt.input)
+			got := naming.ToSnakeCase(tt.input)
 			assert.Equal(t, tt.want, got)
 		})
 	}
