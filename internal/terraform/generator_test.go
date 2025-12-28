@@ -87,7 +87,7 @@ func TestGenerate(t *testing.T) {
 	supportsLocation := SupportsLocation(schema)
 
 	apiVersion := "2024-01-01"
-	err = Generate(schema, "testResource", "test_local", apiVersion, supportsTags, supportsLocation, nil)
+	err = Generate(schema, "testResource", "test_local", apiVersion, supportsTags, supportsLocation, nil, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -164,7 +164,7 @@ func TestGenerate_NameVariable_UsesNameSchemaValidations(t *testing.T) {
 		Pattern:   "^[a-z0-9-]{1,63}$",
 	}
 
-	err = Generate(nil, "testResource", "unused_local", "2024-01-01", false, false, nameSchema)
+	err = Generate(nil, "testResource", "unused_local", "2024-01-01", false, false, nameSchema, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -239,7 +239,7 @@ func TestGenerate_NestedObjectValidations(t *testing.T) {
 	supportsTags := SupportsTags(schema)
 	supportsLocation := SupportsLocation(schema)
 
-	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", supportsTags, supportsLocation, nil)
+	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", supportsTags, supportsLocation, nil, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -305,7 +305,7 @@ func TestGenerate_QuotesNonIdentifierObjectKeysInLocals(t *testing.T) {
 	}
 
 	apiVersion := "2025-10-01"
-	err = Generate(schema, "Microsoft.ContainerService/managedClusters", "resource_body", apiVersion, false, false, nil)
+	err = Generate(schema, "Microsoft.ContainerService/managedClusters", "resource_body", apiVersion, false, false, nil, nil)
 	require.NoError(t, err)
 
 	localsBytes, err := os.ReadFile("locals.tf")
@@ -368,7 +368,7 @@ func TestGenerate_SkipsSecretsByFullPathNotLeafName(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil)
+	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	localsBytes, err := os.ReadFile("locals.tf")
@@ -412,7 +412,7 @@ func TestGenerate_MainEnablesIgnoreNullProperty(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil)
+	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	mainBytes, err := os.ReadFile("main.tf")
@@ -447,7 +447,7 @@ func TestGenerate_FailsOnFlattenedPropertiesNameCollision(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil)
+	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "collision")
 }
@@ -485,7 +485,7 @@ func TestGenerate_DoesNotDuplicateSecretVarsFromFlattenedProperties(t *testing.T
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil)
+	err = Generate(schema, "testResource", "resource_body", "2025-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -563,7 +563,7 @@ func TestGenerate_IncludesAdditionalPropertiesDescription(t *testing.T) {
 
 	supportsLocation := SupportsLocation(schema)
 
-	err = Generate(schema, "testResource", "local_map", "", false, supportsLocation, nil)
+	err = Generate(schema, "testResource", "local_map", "", false, supportsLocation, nil, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -604,7 +604,7 @@ func TestGenerate_WithTagsSupport(t *testing.T) {
 
 	supportsLocation := SupportsLocation(schema)
 
-	err = Generate(schema, "testResource", "resource_body", "", true, supportsLocation, nil)
+	err = Generate(schema, "testResource", "resource_body", "", true, supportsLocation, nil, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -642,7 +642,7 @@ func TestGenerate_UsesPlaceholderWhenVersionMissing(t *testing.T) {
 	supportsTags := SupportsTags(schema)
 	supportsLocation := SupportsLocation(schema)
 
-	err = Generate(schema, "testResource", "placeholder_local", "", supportsTags, supportsLocation, nil)
+	err = Generate(schema, "testResource", "placeholder_local", "", supportsTags, supportsLocation, nil, nil)
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")
@@ -660,7 +660,7 @@ func TestGenerate_WithNilSchemaSetsEmptyBody(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	err = Generate(nil, "testResource", "unused_local", "2024-01-01", false, false, nil)
+	err = Generate(nil, "testResource", "unused_local", "2024-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -944,7 +944,7 @@ func TestGenerate_WithSecretFields(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", false, false, nil)
+	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	// Check variables.tf
@@ -1064,7 +1064,7 @@ func TestGenerate_ArraySecretItems_TreatedAsSingleSecretArray(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", false, false, nil)
+	err = Generate(schema, "Microsoft.Test/testResource", "resource_body", "2024-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -1185,7 +1185,7 @@ func TestGenerate_ResponseExportValues(t *testing.T) {
 	}
 
 	apiVersion := "2024-01-01"
-	err = Generate(schema, "Microsoft.App/managedEnvironments", "resource_body", apiVersion, false, true, nil)
+	err = Generate(schema, "Microsoft.App/managedEnvironments", "resource_body", apiVersion, false, true, nil, nil)
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")
@@ -1284,7 +1284,7 @@ func TestGenerate_ResponseExportValuesWithBlocklist(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil)
+	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")
@@ -1333,7 +1333,7 @@ func TestGenerate_ResponseExportValuesEmptyWhenNoReadOnly(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil)
+	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")

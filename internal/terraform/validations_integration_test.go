@@ -112,7 +112,7 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "Microsoft.Test/comprehensive", "resource_body", "2024-01-01", false, false, nil)
+	err = Generate(schema, "Microsoft.Test/comprehensive", "resource_body", "2024-01-01", false, false, nil, nil)
 	require.NoError(t, err)
 
 	// Read and verify the generated file
@@ -178,9 +178,11 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 	// - allowed_ip_ranges: 3 (min, max, unique)
 	// - capacity: 2 (min, max)
 	// - tier: 1 (x-ms-enum)
-	// - AVM interface variables: 3 (diagnostic_settings: 2, lock: 1)
-	// Total: 13
-	assert.Equal(t, 13, validationCount, "Should have 13 validation blocks")
+	// Total: 10
+	// Note: AVM interface variables (diagnostic_settings, private_endpoints, etc.) are only generated
+	// when capabilities are detected from the OpenAPI spec, which requires a non-nil spec parameter.
+	// This test passes nil for spec, so no interface variables are generated.
+	assert.Equal(t, 10, validationCount, "Should have 10 validation blocks")
 
 	t.Logf("Generated %d validation blocks", validationCount)
 }
