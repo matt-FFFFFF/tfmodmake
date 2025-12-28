@@ -3,7 +3,7 @@ package terraform
 
 import (
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
+	"github.com/matt-FFFFFF/tfmodmake/openapi"
 )
 
 // Generate generates variables.tf, locals.tf, main.tf, and outputs.tf based on the schema.
@@ -11,7 +11,13 @@ import (
 //
 // The optional nameSchema parameter is used to attach validations to the top-level "name" variable.
 // The spec parameter is used to detect which AVM interface capabilities are supported.
+// The optional moduleNamePrefix is used to rename variables that conflict with Terraform module meta-arguments (e.g., "version" -> "dapr_component_version").
 func Generate(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, nameSchema *openapi3.Schema, spec *openapi3.T) error {
+	return GenerateWithContext(schema, resourceType, localName, apiVersion, supportsTags, supportsLocation, nameSchema, spec, "")
+}
+
+// GenerateWithContext is like Generate but accepts a moduleNamePrefix for renaming reserved variable names.
+func GenerateWithContext(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, nameSchema *openapi3.Schema, spec *openapi3.T, moduleNamePrefix string) error {
 	hasSchema := schema != nil
 	supportsIdentity := SupportsIdentity(schema)
 
@@ -30,11 +36,11 @@ func Generate(schema *openapi3.Schema, resourceType string, localName string, ap
 	if err := generateTerraform(); err != nil {
 		return err
 	}
-	if err := generateVariables(schema, supportsTags, supportsLocation, supportsIdentity, secrets, nameSchema, caps); err != nil {
+	if err := generateVariables(schema, supportsTags, supportsLocation, supportsIdentity, secrets, nameSchema, caps, moduleNamePrefix); err != nil {
 		return err
 	}
 	if hasSchema {
-		if err := generateLocals(schema, localName, supportsIdentity, secrets, resourceType, caps); err != nil {
+		if err := generateLocals(schema, localName, supportsIdentity, secrets, resourceType, caps, moduleNamePrefix); err != nil {
 			return err
 		}
 	}

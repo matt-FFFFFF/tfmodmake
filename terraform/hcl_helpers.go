@@ -4,7 +4,7 @@ import (
 	"unicode"
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
-	"github.com/matt-FFFFFF/tfmodmake/internal/naming"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/zclconf/go-cty/cty"
 )
 

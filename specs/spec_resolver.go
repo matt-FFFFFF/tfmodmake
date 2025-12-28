@@ -1,4 +1,4 @@
-package main
+package specs
 
 import (
 	"context"
@@ -40,9 +40,9 @@ type SpecResolver interface {
 	Resolve(ctx context.Context, req ResolveRequest) (ResolveResult, error)
 }
 
-type defaultSpecResolver struct{}
+type DefaultSpecResolver struct{}
 
-func (r defaultSpecResolver) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult, error) {
+func (r DefaultSpecResolver) Resolve(ctx context.Context, req ResolveRequest) (ResolveResult, error) {
 	_ = ctx // reserved for future cancellation/timeouts
 
 	out := ResolveResult{
@@ -114,7 +114,7 @@ func dedupeResolvedSpecsPreserveOrder(specs []ResolvedSpec) []ResolvedSpec {
 	return out
 }
 
-func writeResolvedSpecs(w io.Writer, specs []ResolvedSpec) {
+func WriteResolvedSpecs(w io.Writer, specs []ResolvedSpec) {
 	fmt.Fprintln(w, "Resolved specs")
 	for _, spec := range specs {
 		if spec.Source == "" {
@@ -125,7 +125,7 @@ func writeResolvedSpecs(w io.Writer, specs []ResolvedSpec) {
 	}
 }
 
-func githubTokenFromEnv() string {
+func GithubTokenFromEnv() string {
 	tok := os.Getenv("GITHUB_TOKEN")
 	if tok == "" {
 		tok = os.Getenv("GH_TOKEN")

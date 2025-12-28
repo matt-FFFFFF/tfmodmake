@@ -10,10 +10,11 @@ import (
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/matt-FFFFFF/tfmodmake/internal/naming"
-	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
-	"github.com/matt-FFFFFF/tfmodmake/internal/submodule"
-	"github.com/matt-FFFFFF/tfmodmake/internal/terraform"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
+	"github.com/matt-FFFFFF/tfmodmake/openapi"
+	specpkg "github.com/matt-FFFFFF/tfmodmake/specs"
+	"github.com/matt-FFFFFF/tfmodmake/submodule"
+	"github.com/matt-FFFFFF/tfmodmake/terraform"
 )
 
 func printUsage() {
@@ -339,15 +340,15 @@ func handleChildrenCommand() {
 		log.Fatalf("Failed to parse children arguments: %v", err)
 	}
 
-	githubToken := githubTokenFromEnv()
+	githubToken := specpkg.GithubTokenFromEnv()
 
 	includeGlobs := []string{*includeGlob}
 	if *includeGlob == "*.json" && *parent != "" {
 		includeGlobs = defaultDiscoveryGlobsForParent(*parent)
 	}
 
-	resolver := defaultSpecResolver{}
-	resolveReq := ResolveRequest{
+	resolver := specpkg.DefaultSpecResolver{}
+	resolveReq := specpkg.ResolveRequest{
 		Seeds:             specs,
 		GitHubServiceRoot: *specRoot,
 		DiscoverFromSeed:  *discoverFromSpec,
@@ -361,7 +362,7 @@ func handleChildrenCommand() {
 	}
 
 	if *printResolvedSpecs {
-		writeResolvedSpecs(os.Stderr, resolved.Specs)
+		specpkg.WriteResolvedSpecs(os.Stderr, resolved.Specs)
 	}
 
 	// Extract sources for analysis (keep the flag-backed "specs" slice unmodified).
@@ -452,7 +453,7 @@ func handleAddChildCommand() {
 		log.Fatalf(addChildUsage+"\nAt least one -spec or -spec-root is required", os.Args[0], cmdName)
 	}
 
-	githubToken := githubTokenFromEnv()
+	githubToken := specpkg.GithubTokenFromEnv()
 
 	includeGlobs := []string{*includeGlob}
 	if *includeGlob == "*.json" && *parent != "" {
@@ -460,8 +461,8 @@ func handleAddChildCommand() {
 	}
 
 	// Resolve specs using the same logic as children command
-	resolver := defaultSpecResolver{}
-	resolveReq := ResolveRequest{
+	resolver := specpkg.DefaultSpecResolver{}
+	resolveReq := specpkg.ResolveRequest{
 		Seeds:             specs,
 		GitHubServiceRoot: *specRoot,
 		DiscoverFromSeed:  false, // Not needed for addchild
@@ -614,11 +615,14 @@ func generateChildModule(specs []string, childType, modulePath string) error {
 		return fmt.Errorf("%s", errMsg)
 	}
 
+	// Derive module name for variable renaming context
+	moduleName := deriveModuleName(childType)
+
 	// Generate Terraform files in the module directory
 	// We need to temporarily change directory because terraform.Generate writes to the current directory
 	if err := generateInDirectory(modulePath, func() error {
 		localName := "resource_body"
-		return terraform.Generate(schema, childType, localName, apiVersion, supportsTags, supportsLocation, nameSchema, doc)
+		return terraform.GenerateWithContext(schema, childType, localName, apiVersion, supportsTags, supportsLocation, nameSchema, doc, moduleName)
 	}); err != nil {
 		return fmt.Errorf("failed to generate terraform files: %w", err)
 	}
@@ -736,11 +740,11 @@ func handleGenAVMCommand() {
 	}
 
 	// Resolve specs
-	githubToken := githubTokenFromEnv()
+	githubToken := specpkg.GithubTokenFromEnv()
 	includeGlobs := defaultDiscoveryGlobsForParent(*resourceType)
 
-	resolver := defaultSpecResolver{}
-	resolveReq := ResolveRequest{
+	resolver := specpkg.DefaultSpecResolver{}
+	resolveReq := specpkg.ResolveRequest{
 		Seeds:             specs,
 		GitHubServiceRoot: *specRoot,
 		DiscoverFromSeed:  false,
@@ -754,7 +758,7 @@ func handleGenAVMCommand() {
 	}
 
 	if *printResolvedSpecs {
-		writeResolvedSpecs(os.Stderr, resolved.Specs)
+		specpkg.WriteResolvedSpecs(os.Stderr, resolved.Specs)
 	}
 
 	specSources := make([]string, 0, len(resolved.Specs))
