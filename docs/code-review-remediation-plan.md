@@ -121,11 +121,11 @@ for _, specPath := range specSources {
 ```
 
 **Recommendation:**
-Extract a reusable function in `cmd/tfmodmake/main.go` or better yet, `internal/cli/loader.go`:
+Extract a reusable function in `cmd/tfmodmake/resource_loader.go` (new file):
 
-**File:** `internal/cli/loader.go` (new file)
+**File:** `cmd/tfmodmake/resource_loader.go` (new file)
 ```go
-package cli
+package main
 
 import (
     "fmt"
@@ -232,12 +232,12 @@ supportsLocation := result.SupportsLocation
 ```
 
 **Implementation Steps:**
-1. After Phase 0 completes, create `internal/cli/loader.go`
+1. Create `cmd/tfmodmake/resource_loader.go`
 2. Move duplicated logic to `LoadResourceFromSpecs()`
 3. Update `generateChildModule()` to use new function
 4. Update `generateBaseModule()` to use new function
 5. Remove duplicated error building code
-6. Add tests in `internal/cli/loader_test.go`
+6. Add tests in `cmd/tfmodmake/resource_loader_test.go`
 
 **Impact:** Eliminates ~120 lines of duplication, centralizes error handling logic.
 

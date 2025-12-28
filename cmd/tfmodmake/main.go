@@ -146,24 +146,13 @@ func handleDiscoverCommand() {
 }
 
 func handleAddSubCommand() {
-	// Parse args differently based on how we got here
-	var args []string
-	if len(os.Args) > 1 && os.Args[1] == "addsub" {
-		// Legacy: tfmodmake addsub <path>
-		addSub := flag.NewFlagSet("addsub", flag.ExitOnError)
-		if err := addSub.Parse(os.Args[2:]); err != nil {
-			log.Fatalf("Failed to parse addsub arguments: %v", err)
-		}
-		args = addSub.Args()
-	} else {
-		// New: tfmodmake add submodule <path>
-		addSub := flag.NewFlagSet("add submodule", flag.ExitOnError)
-		if err := addSub.Parse(os.Args[3:]); err != nil {
-			log.Fatalf("Failed to parse add submodule arguments: %v", err)
-		}
-		args = addSub.Args()
+	// tfmodmake add submodule <path>
+	addSub := flag.NewFlagSet("add submodule", flag.ExitOnError)
+	if err := addSub.Parse(os.Args[3:]); err != nil {
+		log.Fatalf("Failed to parse add submodule arguments: %v", err)
 	}
 
+	args := addSub.Args()
 	if len(args) != 1 {
 		log.Fatalf("Usage: %s add submodule <path>", os.Args[0])
 	}
@@ -308,23 +297,8 @@ func (s *stringSliceFlag) Set(value string) error {
 }
 
 func handleChildrenCommand() {
-	// Determine the command name and adjust args based on how we got here
-	var cmdName string
-	var argsOffset int
-
-	if len(os.Args) > 1 && os.Args[1] == "children" {
-		// Legacy: tfmodmake children ...
-		cmdName = "children"
-		argsOffset = 2
-	} else if len(os.Args) > 2 && os.Args[1] == "discover" && os.Args[2] == "children" {
-		// New: tfmodmake discover children ...
-		cmdName = "discover children"
-		argsOffset = 3
-	} else {
-		log.Fatalf("Unexpected command structure for children")
-	}
-
-	childrenCmd := flag.NewFlagSet(cmdName, flag.ExitOnError)
+	// tfmodmake discover children ...
+	childrenCmd := flag.NewFlagSet("discover children", flag.ExitOnError)
 
 	var specs stringSliceFlag
 	childrenCmd.Var(&specs, "spec", "Path or URL to OpenAPI spec (can be specified multiple times)")
@@ -336,8 +310,8 @@ func handleChildrenCommand() {
 	jsonOutput := childrenCmd.Bool("json", false, "Output results as JSON instead of markdown")
 	printResolvedSpecs := childrenCmd.Bool("print-resolved-specs", false, "Print the resolved spec list to stderr before analysis")
 
-	if err := childrenCmd.Parse(os.Args[argsOffset:]); err != nil {
-		log.Fatalf("Failed to parse children arguments: %v", err)
+	if err := childrenCmd.Parse(os.Args[3:]); err != nil {
+		log.Fatalf("Failed to parse discover children arguments: %v", err)
 	}
 
 	githubToken := specpkg.GithubTokenFromEnv()
@@ -406,23 +380,8 @@ func handleChildrenCommand() {
 }
 
 func handleAddChildCommand() {
-	// Determine command name and args offset based on how we got here
-	var cmdName string
-	var argsOffset int
-
-	if len(os.Args) > 1 && os.Args[1] == "addchild" {
-		// Legacy: tfmodmake addchild ...
-		cmdName = "addchild"
-		argsOffset = 2
-	} else if len(os.Args) > 2 && os.Args[1] == "gen" && os.Args[2] == "submodule" {
-		// New: tfmodmake gen submodule ...
-		cmdName = "gen submodule"
-		argsOffset = 3
-	} else {
-		log.Fatalf("Unexpected command structure for addchild/gen submodule")
-	}
-
-	addChildCmd := flag.NewFlagSet(cmdName, flag.ExitOnError)
+	// tfmodmake gen submodule ...
+	addChildCmd := flag.NewFlagSet("gen submodule", flag.ExitOnError)
 
 	var specs stringSliceFlag
 	addChildCmd.Var(&specs, "spec", "Path or URL to OpenAPI spec (can be specified multiple times)")
@@ -435,22 +394,22 @@ func handleAddChildCommand() {
 	moduleName := addChildCmd.String("module-name", "", "Override derived module folder name")
 	dryRun := addChildCmd.Bool("dry-run", false, "Print planned actions without writing files")
 
-	if err := addChildCmd.Parse(os.Args[argsOffset:]); err != nil {
-		log.Fatalf("Failed to parse %s arguments: %v", cmdName, err)
+	if err := addChildCmd.Parse(os.Args[3:]); err != nil {
+		log.Fatalf("Failed to parse gen submodule arguments: %v", err)
 	}
 
-	const addChildUsage = "Usage: %s %s -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]"
+	const addChildUsage = "Usage: %s gen submodule -parent <resource_type> -child <resource_type> [-spec <path_or_url>] [-spec-root <url>] [-module-dir <path>] [-module-name <name>] [-dry-run]"
 
 	if *parent == "" {
-		log.Fatalf(addChildUsage+"\n-parent is required", os.Args[0], cmdName)
+		log.Fatalf(addChildUsage+"\n-parent is required", os.Args[0])
 	}
 
 	if *child == "" {
-		log.Fatalf(addChildUsage+"\n-child is required", os.Args[0], cmdName)
+		log.Fatalf(addChildUsage+"\n-child is required", os.Args[0])
 	}
 
 	if len(specs) == 0 && *specRoot == "" {
-		log.Fatalf(addChildUsage+"\nAt least one -spec or -spec-root is required", os.Args[0], cmdName)
+		log.Fatalf(addChildUsage+"\nAt least one -spec or -spec-root is required", os.Args[0])
 	}
 
 	githubToken := specpkg.GithubTokenFromEnv()
