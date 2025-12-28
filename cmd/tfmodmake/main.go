@@ -514,65 +514,18 @@ func generateChildModule(specs []string, childType, modulePath string) error {
 	}
 
 	// Load specs and find the child resource
-	var schema *openapi3.Schema
-	var nameSchema *openapi3.Schema
-	var apiVersion string
-	var supportsTags bool
-	var supportsLocation bool
-	var doc *openapi3.T
-
-	var loadErrors []string
-	var searchErrors []string
-
-	for _, specPath := range specs {
-		loadedDoc, err := openapi.LoadSpec(specPath)
-		if err != nil {
-			loadErrors = append(loadErrors, fmt.Sprintf("- %s: %v", specPath, err))
-			continue // Try next spec
-		}
-
-		// Try to find the child resource in this spec
-		foundSchema, err := openapi.FindResource(loadedDoc, childType)
-		if err != nil {
-			searchErrors = append(searchErrors, fmt.Sprintf("- %s: %v", specPath, err))
-			continue // Try next spec
-		}
-
-		// Found the resource!
-		schema = foundSchema
-		doc = loadedDoc
-
-		// Get API version
-		if loadedDoc.Info != nil {
-			apiVersion = loadedDoc.Info.Version
-		}
-
-		// Get name schema
-		nameSchema, _ = openapi.FindResourceNameSchema(loadedDoc, childType)
-
-		// Apply writability overrides
-		openapi.AnnotateSchemaRefOrigins(schema)
-		if resolver, err := openapi.NewPropertyWritabilityResolver(specPath); err == nil && resolver != nil {
-			openapi.ApplyPropertyWritabilityOverrides(schema, resolver)
-		}
-
-		// Check for tags and location support
-		supportsTags = terraform.SupportsTags(schema)
-		supportsLocation = terraform.SupportsLocation(schema)
-
-		break
+	// Load the child resource from specs
+	result, err := LoadResourceFromSpecs(specs, childType)
+	if err != nil {
+		return fmt.Errorf("failed to load child resource: %w", err)
 	}
 
-	if schema == nil {
-		errMsg := fmt.Sprintf("child resource type %s not found in any of the provided specs", childType)
-		if len(loadErrors) > 0 {
-			errMsg += fmt.Sprintf("\n\nSpec load errors:\n%s", strings.Join(loadErrors, "\n"))
-		}
-		if len(searchErrors) > 0 {
-			errMsg += fmt.Sprintf("\n\nSpecs checked:\n%s", strings.Join(searchErrors, "\n"))
-		}
-		return fmt.Errorf("%s", errMsg)
-	}
+	schema := result.Schema
+	doc := result.Doc
+	apiVersion := result.APIVersion
+	nameSchema := result.NameSchema
+	supportsTags := result.SupportsTags
+	supportsLocation := result.SupportsLocation
 
 	// Derive module name for variable renaming context
 	moduleName := deriveModuleName(childType)
@@ -838,66 +791,18 @@ func isInterfaceManagedChild(childResourceType string) bool {
 
 // generateBaseModule generates the base module files in the current directory
 func generateBaseModule(specSources []string, resourceType, rootPath, localName string) error {
-	var schema *openapi3.Schema
-	var nameSchema *openapi3.Schema
-	var apiVersion string
-	var supportsTags bool
-	var supportsLocation bool
-	var doc *openapi3.T
-
-	// Find the resource in the specs
-	var loadErrors []string
-	var searchErrors []string
-
-	for _, specPath := range specSources {
-		loadedDoc, err := openapi.LoadSpec(specPath)
-		if err != nil {
-			loadErrors = append(loadErrors, fmt.Sprintf("- %s: %v", specPath, err))
-			continue
-		}
-
-		// Try to find the resource in this spec
-		foundSchema, err := openapi.FindResource(loadedDoc, resourceType)
-		if err != nil {
-			searchErrors = append(searchErrors, fmt.Sprintf("- %s: %v", specPath, err))
-			continue
-		}
-
-		// Found the resource!
-		schema = foundSchema
-		doc = loadedDoc
-
-		// Get API version
-		if loadedDoc.Info != nil {
-			apiVersion = loadedDoc.Info.Version
-		}
-
-		// Get name schema
-		nameSchema, _ = openapi.FindResourceNameSchema(loadedDoc, resourceType)
-
-		// Apply writability overrides
-		openapi.AnnotateSchemaRefOrigins(schema)
-		if resolver, err := openapi.NewPropertyWritabilityResolver(specPath); err == nil && resolver != nil {
-			openapi.ApplyPropertyWritabilityOverrides(schema, resolver)
-		}
-
-		// Check for tags and location support
-		supportsTags = terraform.SupportsTags(schema)
-		supportsLocation = terraform.SupportsLocation(schema)
-
-		break
+	// Load the resource from specs
+	result, err := LoadResourceFromSpecs(specSources, resourceType)
+	if err != nil {
+		return fmt.Errorf("failed to load resource: %w", err)
 	}
 
-	if schema == nil {
-		errMsg := fmt.Sprintf("resource type %s not found in any of the provided specs", resourceType)
-		if len(loadErrors) > 0 {
-			errMsg += fmt.Sprintf("\n\nSpec load errors:\n%s", strings.Join(loadErrors, "\n"))
-		}
-		if len(searchErrors) > 0 {
-			errMsg += fmt.Sprintf("\n\nSpecs checked:\n%s", strings.Join(searchErrors, "\n"))
-		}
-		return fmt.Errorf("%s", errMsg)
-	}
+	schema := result.Schema
+	doc := result.Doc
+	apiVersion := result.APIVersion
+	nameSchema := result.NameSchema
+	supportsTags := result.SupportsTags
+	supportsLocation := result.SupportsLocation
 
 	// Navigate to root path if specified
 	if rootPath != "" {
