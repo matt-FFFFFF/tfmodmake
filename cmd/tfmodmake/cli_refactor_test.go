@@ -559,3 +559,340 @@ func TestDiscoverChildren(t *testing.T) {
 		t.Errorf("Expected text output to contain child resource type, got: %s", outputStr)
 	}
 }
+
+// TestGenAVM tests that `tfmodmake gen avm` creates base module + child modules + AVM interfaces
+func TestGenAVM(t *testing.T) {
+	// Create a hermetic test spec with parent and 2 children
+	testSpec := map[string]interface{}{
+		"swagger": "2.0",
+		"info": map[string]interface{}{
+			"version": "2024-01-01",
+		},
+		"paths": map[string]interface{}{
+			// Parent resource
+			"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/parents/{parentName}": map[string]interface{}{
+				"put": map[string]interface{}{
+					"operationId": "Parents_CreateOrUpdate",
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "parameters",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Parent",
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Parent",
+							},
+						},
+					},
+				},
+			},
+			// Child resource 1
+			"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/parents/{parentName}/childOnes/{childName}": map[string]interface{}{
+				"put": map[string]interface{}{
+					"operationId": "ChildOnes_CreateOrUpdate",
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "parameters",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/ChildOne",
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/ChildOne",
+							},
+						},
+					},
+				},
+			},
+			// Child resource 2
+			"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/parents/{parentName}/childTwos/{childName}": map[string]interface{}{
+				"put": map[string]interface{}{
+					"operationId": "ChildTwos_CreateOrUpdate",
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "parameters",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/ChildTwo",
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/ChildTwo",
+							},
+						},
+					},
+				},
+			},
+		},
+		"definitions": map[string]interface{}{
+			"Parent": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"properties": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"parentValue": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+				},
+			},
+			"ChildOne": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"properties": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"childOneValue": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+				},
+			},
+			"ChildTwo": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"properties": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"childTwoValue": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	tmpDir := t.TempDir()
+	specPath := filepath.Join(tmpDir, "test_spec.json")
+	specData, err := json.MarshalIndent(testSpec, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal test spec: %v", err)
+	}
+	if err := os.WriteFile(specPath, specData, 0o644); err != nil {
+		t.Fatalf("Failed to write test spec: %v", err)
+	}
+
+	// Build tfmodmake for testing
+	tfmodmakePath := filepath.Join(t.TempDir(), "tfmodmake")
+	buildCmd := exec.Command("go", "build", "-o", tfmodmakePath, ".")
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build tfmodmake: %v\n%s", err, output)
+	}
+
+	// Test gen avm command
+	cmd := exec.Command(tfmodmakePath, "gen", "avm", "-spec", specPath, "-resource", "Microsoft.Test/parents")
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to run gen avm: %v\n%s", err, output)
+	}
+
+	// Verify root module files were created
+	rootFiles := []string{"variables.tf", "locals.tf", "main.tf", "outputs.tf", "terraform.tf"}
+	for _, file := range rootFiles {
+		path := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("Expected root file %s not created", file)
+		}
+	}
+
+	// Verify main.interfaces.tf was created
+	interfacesPath := filepath.Join(tmpDir, "main.interfaces.tf")
+	if _, err := os.Stat(interfacesPath); os.IsNotExist(err) {
+		t.Errorf("main.interfaces.tf should exist after gen avm")
+	}
+
+	// Verify child modules were created (module names are derived from resource type and normalized)
+	childModules := []string{"child_ones", "child_twos"}
+	for _, childMod := range childModules {
+		modulePath := filepath.Join(tmpDir, "modules", childMod)
+		if _, err := os.Stat(modulePath); os.IsNotExist(err) {
+			t.Errorf("Expected child module directory %s not created", modulePath)
+			continue
+		}
+
+		// Check child module files
+		for _, file := range rootFiles {
+			path := filepath.Join(modulePath, file)
+			if _, err := os.Stat(path); os.IsNotExist(err) {
+				t.Errorf("Expected child module file %s not created in %s", file, childMod)
+			}
+		}
+	}
+
+	// Verify wrapper files were created for each child
+	wrapperFiles := []string{
+		"variables.child_ones.tf",
+		"main.child_ones.tf",
+		"variables.child_twos.tf",
+		"main.child_twos.tf",
+	}
+	for _, file := range wrapperFiles {
+		path := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("Expected wrapper file %s not created", file)
+		}
+	}
+
+	// Test idempotency - run again
+	cmd = exec.Command(tfmodmakePath, "gen", "avm", "-spec", specPath, "-resource", "Microsoft.Test/parents")
+	cmd.Dir = tmpDir
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to run gen avm second time (idempotency test): %v\n%s", err, output)
+	}
+
+	// Verify files still exist after second run
+	for _, file := range rootFiles {
+		path := filepath.Join(tmpDir, file)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("Root file %s should still exist after second run", file)
+		}
+	}
+}
+
+// TestGenAVMDryRun tests that `tfmodmake gen avm -dry-run` produces no file changes
+func TestGenAVMDryRun(t *testing.T) {
+	// Create a minimal test spec
+	testSpec := map[string]interface{}{
+		"swagger": "2.0",
+		"info": map[string]interface{}{
+			"version": "2024-01-01",
+		},
+		"paths": map[string]interface{}{
+			"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/parents/{parentName}": map[string]interface{}{
+				"put": map[string]interface{}{
+					"operationId": "Parents_CreateOrUpdate",
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "parameters",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Parent",
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Parent",
+							},
+						},
+					},
+				},
+			},
+			"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/parents/{parentName}/children/{childName}": map[string]interface{}{
+				"put": map[string]interface{}{
+					"operationId": "Children_CreateOrUpdate",
+					"parameters": []interface{}{
+						map[string]interface{}{
+							"name":     "parameters",
+							"in":       "body",
+							"required": true,
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Child",
+							},
+						},
+					},
+					"responses": map[string]interface{}{
+						"200": map[string]interface{}{
+							"description": "OK",
+							"schema": map[string]interface{}{
+								"$ref": "#/definitions/Child",
+							},
+						},
+					},
+				},
+			},
+		},
+		"definitions": map[string]interface{}{
+			"Parent": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"properties": map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+			},
+			"Child": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"properties": map[string]interface{}{
+						"type":       "object",
+						"properties": map[string]interface{}{},
+					},
+				},
+			},
+		},
+	}
+
+	tmpDir := t.TempDir()
+	specPath := filepath.Join(tmpDir, "test_spec.json")
+	specData, err := json.MarshalIndent(testSpec, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal test spec: %v", err)
+	}
+	if err := os.WriteFile(specPath, specData, 0o644); err != nil {
+		t.Fatalf("Failed to write test spec: %v", err)
+	}
+
+	// Build tfmodmake for testing
+	tfmodmakePath := filepath.Join(t.TempDir(), "tfmodmake")
+	buildCmd := exec.Command("go", "build", "-o", tfmodmakePath, ".")
+	if output, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to build tfmodmake: %v\n%s", err, output)
+	}
+
+	// Run gen avm with -dry-run
+	cmd := exec.Command(tfmodmakePath, "gen", "avm", "-spec", specPath, "-resource", "Microsoft.Test/parents", "-dry-run")
+	cmd.Dir = tmpDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Failed to run gen avm -dry-run: %v\n%s", err, output)
+	}
+
+	// Verify output mentions dry run
+	outputStr := string(output)
+	if !strings.Contains(outputStr, "DRY RUN") {
+		t.Errorf("Expected output to mention DRY RUN, got: %s", outputStr)
+	}
+
+	// Verify NO files were created
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to read tmpDir: %v", err)
+	}
+
+	// Should only have the test_spec.json file
+	for _, entry := range entries {
+		if entry.Name() != "test_spec.json" {
+			t.Errorf("Unexpected file/directory created during dry run: %s", entry.Name())
+		}
+	}
+}

@@ -1,12 +1,14 @@
 package terraform
 
 import (
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
 )
 
 // secretField represents a secret field detected in the schema.
@@ -52,6 +54,62 @@ func isSecretField(schema *openapi3.Schema) bool {
 	return false
 }
 
+func isArraySchema(schema *openapi3.Schema) bool {
+	if schema == nil {
+		return false
+	}
+	if schema.Type != nil && slices.Contains(*schema.Type, "array") {
+		return true
+	}
+	return schema.Items != nil
+}
+
+func schemaContainsSecretFields(schema *openapi3.Schema) bool {
+	if schema == nil {
+		return false
+	}
+
+	if isSecretField(schema) {
+		return true
+	}
+
+	if isArraySchema(schema) {
+		if schema.Items == nil || schema.Items.Value == nil {
+			return false
+		}
+		return schemaContainsSecretFields(schema.Items.Value)
+	}
+
+	if schema.Type == nil || !slices.Contains(*schema.Type, "object") {
+		return false
+	}
+
+	props, err := openapi.GetEffectiveProperties(schema)
+	if err != nil {
+		panic(fmt.Sprintf("failed to get effective properties while scanning for secret fields: %v", err))
+	}
+
+	for _, prop := range props {
+		if prop == nil || prop.Value == nil {
+			continue
+		}
+		if !isWritableProperty(prop.Value) {
+			continue
+		}
+		if schemaContainsSecretFields(prop.Value) {
+			return true
+		}
+	}
+
+	if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
+		if schemaContainsSecretFields(schema.AdditionalProperties.Schema.Value) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // collectSecretFields traverses the schema and collects all fields marked with x-ms-secret.
 func collectSecretFields(schema *openapi3.Schema, pathPrefix string) []secretField {
 	var secrets []secretField
@@ -88,22 +146,34 @@ func collectSecretFields(schema *openapi3.Schema, pathPrefix string) []secretFie
 			})
 		}
 
+		// Coarse-grained handling for secrets inside arrays of items:
+		// if any of the item schema's fields are secret, treat the entire array property
+		// as a single secret-bearing field at the array property path (no [] segments).
+		//
+		// This enables:
+		//   - moving the whole array off the regular body into sensitive_body,
+		//   - generating a single <var>_version for lifecycle forcing, and
+		//   - avoiding invalid HCL keys like "secrets[]".
+		if !isSecretField(propSchema) && isArraySchema(propSchema) {
+			if propSchema.Items != nil && propSchema.Items.Value != nil && schemaContainsSecretFields(propSchema.Items.Value) {
+				secrets = append(secrets, secretField{
+					path:    currentPath,
+					varName: toSnakeCase(name),
+					schema:  propSchema,
+				})
+				continue
+			}
+		}
+
 		// Recursively check nested objects
 		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propSchema.Properties) > 0 {
 			nested := collectSecretFields(propSchema, currentPath)
 			secrets = append(secrets, nested...)
 		}
 
-		// Check array items for nested secrets
-		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "array") {
-			if propSchema.Items != nil && propSchema.Items.Value != nil {
-				itemSchema := propSchema.Items.Value
-				if itemSchema.Type != nil && slices.Contains(*itemSchema.Type, "object") && len(itemSchema.Properties) > 0 {
-					nested := collectSecretFields(itemSchema, currentPath+"[]")
-					secrets = append(secrets, nested...)
-				}
-			}
-		}
+		// NOTE: For arrays whose item schema contains secret fields, we intentionally treat the
+		// whole array as a single secret-bearing field (see coarse-grained logic above).
+		// This avoids invalid keys like "secrets[]" while still keeping secrets out of `body`.
 	}
 
 	return secrets

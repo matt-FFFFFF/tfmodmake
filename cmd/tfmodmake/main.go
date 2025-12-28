@@ -26,6 +26,7 @@ Commands:
   (default)              Generate base module (same as 'gen')
   gen                    Generate base module
   gen submodule          Generate a child/submodule and wire it into parent
+  gen avm                Generate base module + child submodules + AVM interfaces
   add submodule <path>   Generate wrapper for an existing submodule
   add avm-interfaces [path]  Generate main.interfaces.tf (infers resource from main.tf)
   discover children      List deployable child resource types
@@ -101,6 +102,10 @@ func handleGenCommand() {
 		case "submodule":
 			// tfmodmake gen submodule - handled by addchild logic
 			handleAddChildCommand()
+			return
+		case "avm":
+			// tfmodmake gen avm - orchestrator for AVM module generation
+			handleGenAVMCommand()
 			return
 		}
 	}
@@ -212,7 +217,7 @@ func handleDefaultGeneration() {
 	genCmd.Usage = func() {
 		printUsage()
 	}
-	
+
 	specPath := genCmd.String("spec", "", "Path or URL to the OpenAPI specification")
 	resourceType := genCmd.String("resource", "", "Resource type to generate Terraform configuration for (e.g. Microsoft.ContainerService/managedClusters)")
 	rootPath := genCmd.String("root", "", "Path to the root object (e.g. properties or properties.foo)")
@@ -294,7 +299,7 @@ func handleChildrenCommand() {
 	// Determine the command name and adjust args based on how we got here
 	var cmdName string
 	var argsOffset int
-	
+
 	if len(os.Args) > 1 && os.Args[1] == "children" {
 		// Legacy: tfmodmake children ...
 		cmdName = "children"
@@ -392,7 +397,7 @@ func handleAddChildCommand() {
 	// Determine command name and args offset based on how we got here
 	var cmdName string
 	var argsOffset int
-	
+
 	if len(os.Args) > 1 && os.Args[1] == "addchild" {
 		// Legacy: tfmodmake addchild ...
 		cmdName = "addchild"
@@ -523,10 +528,11 @@ func deriveModuleName(childType string) string {
 	// Get the last segment
 	lastSlash := strings.LastIndex(normalized, "/")
 	if lastSlash == -1 {
-		return normalized
+		return naming.ToSnakeCase(normalized)
 	}
 
-	return normalized[lastSlash+1:]
+	segment := normalized[lastSlash+1:]
+	return naming.ToSnakeCase(segment)
 }
 
 // generateChildModule generates a child module scaffold at the specified path.
@@ -657,7 +663,7 @@ func inferResourceTypeFromMainTf() (string, error) {
 	// This is a simple string search approach
 	content := string(data)
 	lines := strings.Split(content, "\n")
-	
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "type") && strings.Contains(trimmed, "=") {
@@ -673,4 +679,253 @@ func inferResourceTypeFromMainTf() (string, error) {
 	}
 
 	return "", fmt.Errorf("could not find resource type in main.tf")
+}
+
+// handleGenAVMCommand orchestrates end-to-end AVM module generation:
+// 1) Generate base module
+// 2) Discover children
+// 3) Generate submodule for each child
+// 4) Generate AVM interfaces
+func handleGenAVMCommand() {
+	genAVMCmd := flag.NewFlagSet("gen avm", flag.ExitOnError)
+
+	// Spec resolution flags (same as discover children / gen submodule)
+	var specs stringSliceFlag
+	genAVMCmd.Var(&specs, "spec", "Path or URL to OpenAPI spec (can be specified multiple times)")
+	specRoot := genAVMCmd.String("spec-root", "", "GitHub tree URL under Azure/azure-rest-api-specs")
+	includePreview := genAVMCmd.Bool("include-preview", false, "Include latest preview API version when discovering specs")
+	printResolvedSpecs := genAVMCmd.Bool("print-resolved-specs", false, "Print resolved spec list to stderr")
+
+	// Parent resource selection
+	resourceType := genAVMCmd.String("resource", "", "Parent resource type (e.g. Microsoft.App/managedEnvironments)")
+
+	// Base generation options
+	rootPath := genAVMCmd.String("root", "", "Path to the root object (e.g. properties or properties.foo)")
+	localName := genAVMCmd.String("local-name", "", "Name of the local variable to generate")
+
+	// Submodule options
+	moduleDir := genAVMCmd.String("module-dir", "modules", "Directory where child modules live")
+
+	// Dry run
+	dryRun := genAVMCmd.Bool("dry-run", false, "Print planned actions without writing files")
+
+	if err := genAVMCmd.Parse(os.Args[3:]); err != nil {
+		log.Fatalf("Failed to parse gen avm arguments: %v", err)
+	}
+
+	// Validate required arguments
+	if *resourceType == "" {
+		log.Fatalf("Usage: %s gen avm -resource <resource_type> [-spec <path_or_url>] [-spec-root <url>] [flags]\n-resource is required", os.Args[0])
+	}
+
+	if len(specs) == 0 && *specRoot == "" {
+		log.Fatalf("Usage: %s gen avm -resource <resource_type> [-spec <path_or_url>] [-spec-root <url>] [flags]\nAt least one -spec or -spec-root is required", os.Args[0])
+	}
+
+	// Resolve specs
+	githubToken := githubTokenFromEnv()
+	includeGlobs := defaultDiscoveryGlobsForParent(*resourceType)
+
+	resolver := defaultSpecResolver{}
+	resolveReq := ResolveRequest{
+		Seeds:             specs,
+		GitHubServiceRoot: *specRoot,
+		DiscoverFromSeed:  false,
+		IncludeGlobs:      includeGlobs,
+		IncludePreview:    *includePreview,
+		GitHubToken:       githubToken,
+	}
+	resolved, err := resolver.Resolve(context.Background(), resolveReq)
+	if err != nil {
+		log.Fatalf("Failed to resolve specs: %v", err)
+	}
+
+	if *printResolvedSpecs {
+		writeResolvedSpecs(os.Stderr, resolved.Specs)
+	}
+
+	specSources := make([]string, 0, len(resolved.Specs))
+	for _, spec := range resolved.Specs {
+		if spec.Source == "" {
+			continue
+		}
+		specSources = append(specSources, spec.Source)
+	}
+
+	if len(specSources) == 0 {
+		log.Fatalf("No specs resolved. Please provide -spec or -spec-root.")
+	}
+
+	if *dryRun {
+		fmt.Println("DRY RUN: Would execute the following steps:")
+		fmt.Printf("1. Generate base module for resource: %s\n", *resourceType)
+		fmt.Printf("2. Discover children under parent: %s\n", *resourceType)
+		fmt.Printf("3. Generate submodule for each discovered child in: %s/\n", *moduleDir)
+		fmt.Printf("4. Generate main.interfaces.tf\n")
+		fmt.Printf("Using %d resolved spec(s)\n", len(specSources))
+		return
+	}
+
+	// Execute orchestration
+	if err := orchestrateAVMGeneration(specSources, *resourceType, *rootPath, *localName, *moduleDir); err != nil {
+		log.Fatalf("Failed to generate AVM module: %v", err)
+	}
+
+	fmt.Println("Successfully generated AVM module with child submodules and interfaces")
+}
+
+// orchestrateAVMGeneration performs the full AVM generation workflow
+func orchestrateAVMGeneration(specSources []string, resourceType, rootPath, localName, moduleDir string) error {
+	// Step 1: Generate base module
+	fmt.Println("Step 1/4: Generating base module...")
+	if err := generateBaseModule(specSources, resourceType, rootPath, localName); err != nil {
+		return fmt.Errorf("failed to generate base module: %w", err)
+	}
+
+	// Step 2: Discover children
+	fmt.Println("Step 2/4: Discovering child resources...")
+	opts := openapi.DiscoverChildrenOptions{
+		Specs:  specSources,
+		Parent: resourceType,
+		Depth:  1,
+	}
+	result, err := openapi.DiscoverChildren(opts)
+	if err != nil {
+		return fmt.Errorf("failed to discover children: %w", err)
+	}
+
+	fmt.Printf("Found %d deployable child resource type(s)\n", len(result.Deployable))
+
+	// Step 3: Generate submodule for each child
+	if len(result.Deployable) > 0 {
+		fmt.Println("Step 3/4: Generating child submodules...")
+		for i, child := range result.Deployable {
+			// Some child resource types are managed via AVM interfaces on the parent module.
+			// For example, private endpoints are configured through the interfaces module and
+			// should not be generated as a standalone child submodule.
+			if isInterfaceManagedChild(child.ResourceType) {
+				fmt.Printf("  [%d/%d] Skipping interface-managed child %s\n", i+1, len(result.Deployable), child.ResourceType)
+				continue
+			}
+
+			fmt.Printf("  [%d/%d] Generating submodule for %s...\n", i+1, len(result.Deployable), child.ResourceType)
+
+			// Derive module name from child type
+			moduleName := deriveModuleName(child.ResourceType)
+			modulePath := filepath.Join(moduleDir, moduleName)
+
+			// Generate child module
+			if err := generateChildModule(specSources, child.ResourceType, modulePath); err != nil {
+				return fmt.Errorf("failed to generate child module for %s: %w", child.ResourceType, err)
+			}
+
+			// Wire child module into parent
+			if err := submodule.Generate(modulePath); err != nil {
+				return fmt.Errorf("failed to wire child module for %s: %w", child.ResourceType, err)
+			}
+		}
+	} else {
+		fmt.Println("Step 3/4: No child resources found, skipping submodule generation")
+	}
+
+	// Step 4: Generate AVM interfaces
+	fmt.Println("Step 4/4: Generating AVM interfaces...")
+	if err := terraform.GenerateInterfacesFile(resourceType); err != nil {
+		return fmt.Errorf("failed to generate AVM interfaces: %w", err)
+	}
+
+	return nil
+}
+
+func isInterfaceManagedChild(childResourceType string) bool {
+	// Today, the only known interface-managed child we want to suppress is Private Endpoint Connections.
+	// The interfaces module handles private endpoints through the `private_endpoints` input.
+	last := childResourceType
+	if idx := strings.LastIndex(childResourceType, "/"); idx >= 0 {
+		last = childResourceType[idx+1:]
+	}
+	return strings.EqualFold(last, "privateEndpointConnections")
+}
+
+// generateBaseModule generates the base module files in the current directory
+func generateBaseModule(specSources []string, resourceType, rootPath, localName string) error {
+	var schema *openapi3.Schema
+	var nameSchema *openapi3.Schema
+	var apiVersion string
+	var supportsTags bool
+	var supportsLocation bool
+
+	// Find the resource in the specs
+	var loadErrors []string
+	var searchErrors []string
+
+	for _, specPath := range specSources {
+		doc, err := openapi.LoadSpec(specPath)
+		if err != nil {
+			loadErrors = append(loadErrors, fmt.Sprintf("- %s: %v", specPath, err))
+			continue
+		}
+
+		// Try to find the resource in this spec
+		foundSchema, err := openapi.FindResource(doc, resourceType)
+		if err != nil {
+			searchErrors = append(searchErrors, fmt.Sprintf("- %s: %v", specPath, err))
+			continue
+		}
+
+		// Found the resource!
+		schema = foundSchema
+
+		// Get API version
+		if doc.Info != nil {
+			apiVersion = doc.Info.Version
+		}
+
+		// Get name schema
+		nameSchema, _ = openapi.FindResourceNameSchema(doc, resourceType)
+
+		// Apply writability overrides
+		openapi.AnnotateSchemaRefOrigins(schema)
+		if resolver, err := openapi.NewPropertyWritabilityResolver(specPath); err == nil && resolver != nil {
+			openapi.ApplyPropertyWritabilityOverrides(schema, resolver)
+		}
+
+		// Check for tags and location support
+		supportsTags = terraform.SupportsTags(schema)
+		supportsLocation = terraform.SupportsLocation(schema)
+
+		break
+	}
+
+	if schema == nil {
+		errMsg := fmt.Sprintf("resource type %s not found in any of the provided specs", resourceType)
+		if len(loadErrors) > 0 {
+			errMsg += fmt.Sprintf("\n\nSpec load errors:\n%s", strings.Join(loadErrors, "\n"))
+		}
+		if len(searchErrors) > 0 {
+			errMsg += fmt.Sprintf("\n\nSpecs checked:\n%s", strings.Join(searchErrors, "\n"))
+		}
+		return fmt.Errorf("%s", errMsg)
+	}
+
+	// Navigate to root path if specified
+	if rootPath != "" {
+		navigatedSchema, err := openapi.NavigateSchema(schema, rootPath)
+		if err != nil {
+			return fmt.Errorf("failed to navigate to root path %s: %w", rootPath, err)
+		}
+		schema = navigatedSchema
+	}
+
+	// Determine local name
+	finalLocalName := "resource_body"
+	if localName != "" {
+		finalLocalName = localName
+	} else if rootPath != "" {
+		finalLocalName = strings.ReplaceAll(rootPath, ".", "_")
+		finalLocalName = naming.ToSnakeCase(finalLocalName)
+	}
+
+	// Generate Terraform files
+	return terraform.Generate(schema, resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, nameSchema)
 }

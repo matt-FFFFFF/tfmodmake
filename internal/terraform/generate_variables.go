@@ -18,6 +18,38 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
+	arrayItemsContainSecret := func(schema *openapi3.Schema) bool {
+		if schema == nil || schema.Type == nil {
+			return false
+		}
+		if !slices.Contains(*schema.Type, "array") {
+			return false
+		}
+		if schema.Items == nil || schema.Items.Value == nil {
+			return false
+		}
+		itemSchema := schema.Items.Value
+		if itemSchema.Type == nil || !slices.Contains(*itemSchema.Type, "object") {
+			return false
+		}
+		props, err := openapi.GetEffectiveProperties(itemSchema)
+		if err != nil {
+			panic(fmt.Sprintf("failed to get effective properties for array item schema: %v", err))
+		}
+		for _, prop := range props {
+			if prop == nil || prop.Value == nil {
+				continue
+			}
+			if !isWritableProperty(prop.Value) {
+				continue
+			}
+			if isSecretField(prop.Value) {
+				return true
+			}
+		}
+		return false
+	}
+
 	appendTFLintIgnoreUnused := func() {
 		body.AppendUnstructuredTokens(hclwrite.Tokens{
 			&hclwrite.Token{Type: hclsyntax.TokenComment, Bytes: []byte("# tflint-ignore: terraform_unused_declarations")},
@@ -103,6 +135,13 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 			varBody.SetAttributeValue("ephemeral", cty.True)
 		}
 
+		// If this is an array of objects that contains secret fields in its items,
+		// mark the whole variable as ephemeral. We currently don't generate array-aware
+		// sensitive_body, so this prevents secrets from persisting in state.
+		if arrayItemsContainSecret(propSchema) {
+			varBody.SetAttributeValue("ephemeral", cty.True)
+		}
+
 		// Generate validations for this variable
 		generateValidations(varBody, tfName, propSchema, isRequired)
 		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propSchema.Properties) > 0 {
@@ -148,7 +187,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 				"object",
 				hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
 					{Name: hclwrite.TokensForIdentifier("system_assigned"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("bool"), hclwrite.TokensForIdentifier("false"))},
-					{Name: hclwrite.TokensForIdentifier("user_assigned_resource_ids"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListValEmpty(cty.String)))} ,
+					{Name: hclwrite.TokensForIdentifier("user_assigned_resource_ids"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListValEmpty(cty.String)))},
 				}),
 			),
 		)
@@ -158,15 +197,15 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 	}
 
 	reservedNames := map[string]struct{}{
-		"name":                                 {},
-		"parent_id":                            {},
-		"location":                             {},
-		"customer_managed_key":                 {},
-		"diagnostic_settings":                  {},
-		"enable_telemetry":                     {},
-		"role_assignments":                     {},
-		"lock":                                 {},
-		"private_endpoints":                    {},
+		"name":                 {},
+		"parent_id":            {},
+		"location":             {},
+		"customer_managed_key": {},
+		"diagnostic_settings":  {},
+		"enable_telemetry":     {},
+		"role_assignments":     {},
+		"lock":                 {},
+		"private_endpoints":    {},
 		"private_endpoints_manage_dns_zone_group": {},
 	}
 	if supportsTags {
@@ -413,10 +452,10 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 		"A map of diagnostic settings to create on the resource.",
 		hclwrite.TokensForFunctionCall("map", hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
 			{Name: hclwrite.TokensForIdentifier("name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForIdentifier("null"))},
-			{Name: hclwrite.TokensForIdentifier("log_categories"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListValEmpty(cty.String)))} ,
-			{Name: hclwrite.TokensForIdentifier("log_groups"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListVal([]cty.Value{cty.StringVal("allLogs")})))} ,
-			{Name: hclwrite.TokensForIdentifier("metric_categories"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListVal([]cty.Value{cty.StringVal("AllMetrics")})))} ,
-			{Name: hclwrite.TokensForIdentifier("log_analytics_destination_type"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForValue(cty.StringVal("Dedicated")))} ,
+			{Name: hclwrite.TokensForIdentifier("log_categories"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListValEmpty(cty.String)))},
+			{Name: hclwrite.TokensForIdentifier("log_groups"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListVal([]cty.Value{cty.StringVal("allLogs")})))},
+			{Name: hclwrite.TokensForIdentifier("metric_categories"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListVal([]cty.Value{cty.StringVal("AllMetrics")})))},
+			{Name: hclwrite.TokensForIdentifier("log_analytics_destination_type"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForValue(cty.StringVal("Dedicated")))},
 			{Name: hclwrite.TokensForIdentifier("workspace_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForIdentifier("null"))},
 			{Name: hclwrite.TokensForIdentifier("storage_account_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForIdentifier("null"))},
 			{Name: hclwrite.TokensForIdentifier("event_hub_authorization_rule_resource_id"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForIdentifier("null"))},
@@ -569,9 +608,9 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 			{Name: hclwrite.TokensForIdentifier("tags"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("map", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForIdentifier("null"))},
 			{Name: hclwrite.TokensForIdentifier("subnet_resource_id"), Value: hclwrite.TokensForIdentifier("string")},
 			{Name: hclwrite.TokensForIdentifier("subresource_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForIdentifier("null"))},
-			{Name: hclwrite.TokensForIdentifier("private_dns_zone_group_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForValue(cty.StringVal("default")))} ,
-			{Name: hclwrite.TokensForIdentifier("private_dns_zone_resource_ids"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListValEmpty(cty.String)))} ,
-			{Name: hclwrite.TokensForIdentifier("application_security_group_associations"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("map", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.MapValEmpty(cty.String)))} ,
+			{Name: hclwrite.TokensForIdentifier("private_dns_zone_group_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"), hclwrite.TokensForValue(cty.StringVal("default")))},
+			{Name: hclwrite.TokensForIdentifier("private_dns_zone_resource_ids"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("set", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.ListValEmpty(cty.String)))},
+			{Name: hclwrite.TokensForIdentifier("application_security_group_associations"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForFunctionCall("map", hclwrite.TokensForIdentifier("string")), hclwrite.TokensForValue(cty.MapValEmpty(cty.String)))},
 			{Name: hclwrite.TokensForIdentifier("private_service_connection_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
 			{Name: hclwrite.TokensForIdentifier("network_interface_name"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
 			{Name: hclwrite.TokensForIdentifier("location"), Value: hclwrite.TokensForFunctionCall("optional", hclwrite.TokensForIdentifier("string"))},
