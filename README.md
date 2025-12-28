@@ -8,10 +8,10 @@ CLI tool to generate a base Terraform module from an OpenAPI specification.
 *   **Good Terraform ergonomics**: Strong typing, descriptions, nested object/array handling, and optional “flatten `properties`” variable shape.
 *   **Schema-driven validations**: Null-safe validation blocks from common constraints (lengths, patterns, ranges, enums).
 *   **Computed exports**: Auto-suggest `response_export_values` from read-only/non-writable response fields (with noise filtering).
-*   **Submodule helpers**: `add submodule` generates map-based wrapper plumbing for submodules (legacy alias: `addsub`).
-*   **Scope discovery**: `discover children` lists deployable ARM child resource types under a parent (compact text or `-json`; legacy alias: `children`).
+*   **Submodule helpers**: `add submodule` generates map-based wrapper plumbing for submodules.
+*   **Scope discovery**: `discover children` lists deployable ARM child resource types under a parent (compact text or `-json`).
 *   **AVM interfaces scaffolding** (opt-in): Use `add avm-interfaces` to generate `main.interfaces.tf` wiring for common AVM interfaces (role assignments, locks, diagnostic settings, private endpoints, telemetry).
-*   **Child module composition**: `gen submodule` orchestrates end-to-end child module generation and wiring (legacy alias: `addchild`).
+*   **Child module composition**: `gen submodule` orchestrates end-to-end child module generation and wiring.
 
 ## Installation
 
@@ -30,7 +30,7 @@ go build -o tfmodmake ./cmd/tfmodmake
 Generate a base Terraform module:
 
 ```bash
-# Default form (no subcommand - backward compatible)
+# Default form (no subcommand)
 ./tfmodmake -spec <path_or_url> -resource <resource_type> [flags]
 
 # Explicit form using 'gen' subcommand (recommended)
@@ -59,11 +59,12 @@ This command creates/overwrites `main.interfaces.tf` in the current module direc
 **Example:**
 
 ```bash
-# After generating a base module
-./tfmodmake gen -spec <spec_url> -resource Microsoft.Test/testResources
+# Generate base module for AKS
+./tfmodmake gen -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json \
+  -resource Microsoft.ContainerService/managedClusters
 
 # Optionally add AVM interfaces scaffolding
-./tfmodmake add avm-interfaces -resource Microsoft.Test/testResources
+./tfmodmake add avm-interfaces -resource Microsoft.ContainerService/managedClusters
 ```
 
 ### Submodule Wrapper Generation
@@ -71,11 +72,7 @@ This command creates/overwrites `main.interfaces.tf` in the current module direc
 To generate a map-based module block wrapper for an existing submodule:
 
 ```bash
-# New form (recommended)
 ./tfmodmake add submodule <path_to_submodule>
-
-# Legacy form (still supported)
-./tfmodmake addsub <path_to_submodule>
 ```
 
 This command reads the Terraform module at the specified path and generates:
@@ -88,11 +85,7 @@ This command reads the Terraform module at the specified path and generates:
 The `gen submodule` command orchestrates the complete process of creating a child module and wiring it into the parent module:
 
 ```bash
-# New form (recommended)
 ./tfmodmake gen submodule -parent <parent_type> -child <child_type> [flags]
-
-# Legacy form (still supported)
-./tfmodmake addchild -parent <parent_type> -child <child_type> [flags]
 ```
 
 **Required flags:**
@@ -162,28 +155,33 @@ By default, the module name is derived from the last segment of the child resour
 
 ### Basic Usage
 
-Generate configuration for the entire resource:
+Generate configuration for Azure Kubernetes Service (AKS):
 
 ```bash
-# example with AKS and stable API
+# Generate base module for AKS using stable API
 ./tfmodmake \
   -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json \
   -resource Microsoft.ContainerService/managedClusters
 ```
 
+Generate configuration for Container Apps Managed Environment:
+
 ```bash
-# example with Container Apps Managed Environment & preview API
+# Container Apps Managed Environment using preview API
 ./tfmodmake \
   -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/ContainerApps/preview/2025-10-02-preview/ManagedEnvironments.json \
   -resource Microsoft.App/managedEnvironments
 ```
 
+Generate configuration for KeyVault:
+
 ```bash
-# KeyVault and KeyVault secret
+# KeyVault vault
 ./tfmodmake \
   -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2025-05-01/openapi.json \
   -resource Microsoft.KeyVault/vaults
 
+# KeyVault secret (child resource with custom local name)
 ./tfmodmake \
   -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2024-11-01/secrets.json \
   -resource Microsoft.KeyVault/vaults/secrets \
@@ -262,11 +260,7 @@ The `discover children` command inspects OpenAPI specs and returns child resourc
 This is a discovery process that does not generate any terraform code; it is designed to help identify child resources for use with the `gen submodule` command.
 
 ```bash
-# New form (recommended)
 ./tfmodmake discover children -spec <path_or_url> -parent <resource_type> [-json]
-
-# Legacy form (still supported)
-./tfmodmake children -spec <path_or_url> -parent <resource_type> [-json]
 ```
 
 **Common flags:**

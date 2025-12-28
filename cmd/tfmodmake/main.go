@@ -30,11 +30,6 @@ Commands:
   add avm-interfaces     Generate main.interfaces.tf (opt-in AVM scaffolding)
   discover children      List deployable child resource types
 
-Legacy Commands (still supported):
-  addsub <path>          Alias for 'add submodule'
-  addchild               Alias for 'gen submodule'
-  children               Alias for 'discover children'
-
 Flags for base generation (default / gen):
   -spec string
         Path or URL to the OpenAPI specification (required)
@@ -46,14 +41,14 @@ Flags for base generation (default / gen):
         Name of the local variable to generate (default: resource_body or derived from root) (optional)
 
 Examples:
-  # Generate base module (default form)
-  tfmodmake -spec <url> -resource Microsoft.Test/tests
+  # Generate base module for AKS
+  tfmodmake -spec <url> -resource Microsoft.ContainerService/managedClusters
 
   # Generate base module (explicit form)
-  tfmodmake gen -spec <url> -resource Microsoft.Test/tests
+  tfmodmake gen -spec <url> -resource Microsoft.ContainerService/managedClusters
 
   # Add AVM interfaces scaffolding
-  tfmodmake add avm-interfaces -resource Microsoft.Test/tests
+  tfmodmake add avm-interfaces -resource Microsoft.ContainerService/managedClusters
 
   # Generate wrapper for existing submodule
   tfmodmake add submodule modules/secrets
@@ -89,16 +84,6 @@ func main() {
 			return
 		case "discover":
 			handleDiscoverCommand()
-			return
-		// Legacy aliases for backward compatibility
-		case "addsub":
-			handleAddSubCommand()
-			return
-		case "addchild":
-			handleAddChildCommand()
-			return
-		case "children":
-			handleChildrenCommand()
 			return
 		}
 	}

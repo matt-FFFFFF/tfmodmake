@@ -384,17 +384,17 @@ func TestAddAVMInterfacesWithInference(t *testing.T) {
 	}
 }
 
-// TestAddSubmoduleAliasEquivalence tests that both `addsub` and `add submodule` work
-func TestAddSubmoduleAliasEquivalence(t *testing.T) {
+// TestAddSubmodule tests that `add submodule` works correctly
+func TestAddSubmodule(t *testing.T) {
 	// Create a minimal dummy submodule
-	createDummySubmodule := func(dir string) {
-		submodulePath := filepath.Join(dir, "modules", "testmod")
-		if err := os.MkdirAll(submodulePath, 0o755); err != nil {
-			t.Fatalf("Failed to create submodule dir: %v", err)
-		}
+	tmpDir := t.TempDir()
+	submodulePath := filepath.Join(tmpDir, "modules", "testmod")
+	if err := os.MkdirAll(submodulePath, 0o755); err != nil {
+		t.Fatalf("Failed to create submodule dir: %v", err)
+	}
 
-		// Create minimal variables.tf
-		variablesTf := `variable "parent_id" {
+	// Create minimal variables.tf
+	variablesTf := `variable "parent_id" {
   type = string
 }
 
@@ -402,9 +402,8 @@ variable "value" {
   type = string
 }
 `
-		if err := os.WriteFile(filepath.Join(submodulePath, "variables.tf"), []byte(variablesTf), 0o644); err != nil {
-			t.Fatalf("Failed to write variables.tf: %v", err)
-		}
+	if err := os.WriteFile(filepath.Join(submodulePath, "variables.tf"), []byte(variablesTf), 0o644); err != nil {
+		t.Fatalf("Failed to write variables.tf: %v", err)
 	}
 
 	// Build tfmodmake for testing
@@ -414,63 +413,25 @@ variable "value" {
 		t.Fatalf("Failed to build tfmodmake: %v\n%s", err, output)
 	}
 
-	// Test legacy addsub command
-	addsubDir := t.TempDir()
-	createDummySubmodule(addsubDir)
-
-	cmd := exec.Command(tfmodmakePath, "addsub", "modules/testmod")
-	cmd.Dir = addsubDir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to run addsub: %v\n%s", err, output)
-	}
-
-	// Verify wrapper files were created
-	wrapperFiles := []string{"variables.testmod.tf", "main.testmod.tf"}
-	for _, file := range wrapperFiles {
-		path := filepath.Join(addsubDir, file)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Errorf("Expected file %s not created by addsub", file)
-		}
-	}
-
-	// Test new add submodule command
-	addSubmoduleDir := t.TempDir()
-	createDummySubmodule(addSubmoduleDir)
-
-	cmd = exec.Command(tfmodmakePath, "add", "submodule", "modules/testmod")
-	cmd.Dir = addSubmoduleDir
+	// Test add submodule command
+	cmd := exec.Command(tfmodmakePath, "add", "submodule", "modules/testmod")
+	cmd.Dir = tmpDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to run add submodule: %v\n%s", err, output)
 	}
 
 	// Verify wrapper files were created
+	wrapperFiles := []string{"variables.testmod.tf", "main.testmod.tf"}
 	for _, file := range wrapperFiles {
-		path := filepath.Join(addSubmoduleDir, file)
+		path := filepath.Join(tmpDir, file)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("Expected file %s not created by add submodule", file)
 		}
 	}
-
-	// Compare content (should be equivalent)
-	for _, file := range wrapperFiles {
-		addsubContent, err := os.ReadFile(filepath.Join(addsubDir, file))
-		if err != nil {
-			t.Fatalf("Failed to read %s from addsub dir: %v", file, err)
-		}
-
-		addSubmoduleContent, err := os.ReadFile(filepath.Join(addSubmoduleDir, file))
-		if err != nil {
-			t.Fatalf("Failed to read %s from add submodule dir: %v", file, err)
-		}
-
-		if string(addsubContent) != string(addSubmoduleContent) {
-			t.Errorf("File %s differs between addsub and add submodule", file)
-		}
-	}
 }
 
-// TestDiscoverChildrenAliasEquivalence tests that both `children` and `discover children` produce identical output
-func TestDiscoverChildrenAliasEquivalence(t *testing.T) {
+// TestDiscoverChildren tests that `discover children` works correctly
+func TestDiscoverChildren(t *testing.T) {
 	// Create a hermetic test spec with a parent and child resource
 	testSpec := map[string]interface{}{
 		"swagger": "2.0",
@@ -574,61 +535,29 @@ func TestDiscoverChildrenAliasEquivalence(t *testing.T) {
 		t.Fatalf("Failed to build tfmodmake: %v\n%s", err, output)
 	}
 
-	// Test legacy children command
-	legacyCmd := exec.Command(tfmodmakePath, "children", "-spec", specPath, "-parent", "Microsoft.Test/parents", "-json")
-	legacyOutput, err := legacyCmd.CombinedOutput()
+	// Test discover children command with JSON output
+	jsonCmd := exec.Command(tfmodmakePath, "discover", "children", "-spec", specPath, "-parent", "Microsoft.Test/parents", "-json")
+	jsonOutput, err := jsonCmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to run legacy children command: %v\n%s", err, legacyOutput)
+		t.Fatalf("Failed to run discover children command: %v\n%s", err, jsonOutput)
 	}
 
-	// Test new discover children command
-	newCmd := exec.Command(tfmodmakePath, "discover", "children", "-spec", specPath, "-parent", "Microsoft.Test/parents", "-json")
-	newOutput, err := newCmd.CombinedOutput()
+	// Verify JSON output is valid
+	var result interface{}
+	if err := json.Unmarshal(jsonOutput, &result); err != nil {
+		t.Fatalf("Failed to parse output as JSON: %v\nOutput: %s", err, jsonOutput)
+	}
+
+	// Test text output mode
+	textCmd := exec.Command(tfmodmakePath, "discover", "children", "-spec", specPath, "-parent", "Microsoft.Test/parents")
+	textOutput, err := textCmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("Failed to run discover children command: %v\n%s", err, newOutput)
+		t.Fatalf("Failed to run discover children command (text mode): %v\n%s", err, textOutput)
 	}
 
-	// Parse both outputs as JSON to compare
-	var legacyResult interface{}
-	var newResult interface{}
-
-	if err := json.Unmarshal(legacyOutput, &legacyResult); err != nil {
-		t.Fatalf("Failed to parse legacy output as JSON: %v\nOutput: %s", err, legacyOutput)
-	}
-
-	if err := json.Unmarshal(newOutput, &newResult); err != nil {
-		t.Fatalf("Failed to parse new output as JSON: %v\nOutput: %s", err, newOutput)
-	}
-
-	// Compare the results by re-marshaling to ensure consistent formatting
-	legacyJSON, err := json.MarshalIndent(legacyResult, "", "  ")
-	if err != nil {
-		t.Fatalf("Failed to re-marshal legacy result: %v", err)
-	}
-
-	newJSON, err := json.MarshalIndent(newResult, "", "  ")
-	if err != nil {
-		t.Fatalf("Failed to re-marshal new result: %v", err)
-	}
-
-	if string(legacyJSON) != string(newJSON) {
-		t.Errorf("Output differs between 'children' and 'discover children'\nLegacy:\n%s\n\nNew:\n%s", legacyJSON, newJSON)
-	}
-
-	// Also test text output mode (non-JSON)
-	legacyTextCmd := exec.Command(tfmodmakePath, "children", "-spec", specPath, "-parent", "Microsoft.Test/parents")
-	legacyTextOutput, err := legacyTextCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Failed to run legacy children command (text mode): %v\n%s", err, legacyTextOutput)
-	}
-
-	newTextCmd := exec.Command(tfmodmakePath, "discover", "children", "-spec", specPath, "-parent", "Microsoft.Test/parents")
-	newTextOutput, err := newTextCmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Failed to run discover children command (text mode): %v\n%s", err, newTextOutput)
-	}
-
-	if string(legacyTextOutput) != string(newTextOutput) {
-		t.Errorf("Text output differs between 'children' and 'discover children'\nLegacy:\n%s\n\nNew:\n%s", legacyTextOutput, newTextOutput)
+	// Verify text output contains expected content
+	outputStr := string(textOutput)
+	if !strings.Contains(outputStr, "Microsoft.Test/parents/children") {
+		t.Errorf("Expected text output to contain child resource type, got: %s", outputStr)
 	}
 }
