@@ -169,6 +169,12 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 				continue
 			}
 
+			// Location is configured via the azapi_resource location argument.
+			// Avoid including it in the request body locals.
+			if isRoot && k == "location" {
+				continue
+			}
+
 			if !isWritableProperty(prop.Value) {
 				continue
 			}
