@@ -32,3 +32,16 @@ go.work.sum
 # .vscode/
 
 /tfmodmake
+
+# Terraform example artifacts
+**/.terraform/
+**/terraform.tfstate
+**/terraform.tfstate.*
+**/.terraform.lock.hcl
+**/crash.log
+**/crash.*.log
+**/examples/
+
+# Generated Terraform files from testing
+/*.tf
+/internal/**/*.tf

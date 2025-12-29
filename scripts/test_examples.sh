@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if ! command -v terraform >/dev/null 2>&1; then
+  echo "terraform not found in PATH" >&2
+  exit 1
+fi
+
+TFMODMAKE_BIN="$(mktemp -t tfmodmake.XXXXXX)"
+
+WORKDIRS=()
+cleanup() {
+  rm -f "$TFMODMAKE_BIN"
+
+  for dir in "${WORKDIRS[@]:-}"; do
+    if [[ -n "${dir}" && -d "${dir}" ]]; then
+      rm -rf "${dir}"
+    fi
+  done
+}
+trap cleanup EXIT
+
+go build -o "$TFMODMAKE_BIN" "$ROOT_DIR/cmd/tfmodmake"
+
+run_case() {
+  local name="$1"
+  local spec="$2"
+  local resource="$3"
+
+  echo "== $name =="
+
+  local workdir
+  workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
+  WORKDIRS+=("$workdir")
+
+  (cd "$workdir" && "$TFMODMAKE_BIN" -spec "$spec" -resource "$resource" >/dev/null)
+  (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
+  (cd "$workdir" && terraform validate -no-color >/dev/null)
+
+  echo "ok"
+}
+
+run_keyvault_case() {
+  echo "== vaults =="
+
+  local workdir
+  workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
+  WORKDIRS+=("$workdir")
+
+  mkdir -p "$workdir/modules/secrets"
+
+  # Base module: Microsoft.KeyVault/vaults
+  (
+    cd "$workdir" &&
+      "$TFMODMAKE_BIN" \
+        -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2025-05-01/openapi.json" \
+        -resource "Microsoft.KeyVault/vaults" \
+        >/dev/null
+  )
+
+  # Secrets submodule: Microsoft.KeyVault/vaults/secrets
+  (
+    cd "$workdir/modules/secrets" &&
+      "$TFMODMAKE_BIN" \
+        -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2024-11-01/secrets.json" \
+        -resource "Microsoft.KeyVault/vaults/secrets" \
+        -local-name "secret_body" \
+        >/dev/null
+  )
+
+  # Parent module wrapper generation for secrets submodule
+  (cd "$workdir" && "$TFMODMAKE_BIN" add submodule modules/secrets >/dev/null)
+
+  (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
+  (cd "$workdir" && terraform validate -no-color >/dev/null)
+
+  echo "ok"
+}
+
+run_case \
+  "managedClusters" \
+  "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json" \
+  "Microsoft.ContainerService/managedClusters"
+
+echo "== managedEnvironments (gen avm) =="
+workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
+WORKDIRS+=("$workdir")
+(cd "$workdir" && "$TFMODMAKE_BIN" gen avm \
+  -spec-root "https://github.com/Azure/azure-rest-api-specs/tree/main/specification/app/resource-manager/Microsoft.App/ContainerApps" \
+  -include-preview \
+  -resource Microsoft.App/managedEnvironments >/dev/null)
+(cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
+(cd "$workdir" && terraform validate -no-color >/dev/null)
+echo "ok"
+
+run_keyvault_case
