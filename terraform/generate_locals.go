@@ -8,12 +8,13 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
-	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
-	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
+	"github.com/matt-FFFFFF/tfmodmake/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
+	"github.com/matt-FFFFFF/tfmodmake/openapi"
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string, caps openapi.InterfaceCapabilities) error {
+func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string, caps openapi.InterfaceCapabilities, moduleNamePrefix string, outputDir string) error {
 	if schema == nil {
 		return nil
 	}
@@ -25,7 +26,10 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 	localBody := locals.Body()
 
 	secretPaths := newSecretPathSet(secrets)
-	valueExpression := constructValue(schema, hclwrite.TokensForIdentifier("var"), true, secretPaths, "", supportsIdentity)
+	valueExpression, err := constructValue(schema, hclwrite.TokensForIdentifier("var"), true, secretPaths, "", supportsIdentity, moduleNamePrefix)
+	if err != nil {
+		return err
+	}
 	localBody.SetAttributeRaw(localName, valueExpression)
 
 	// Managed identity scaffolding (only when the resource schema supports configuring identity).
@@ -39,22 +43,21 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 		localBody.SetAttributeRaw("private_endpoints", tokensForPrivateEndpointsLocal(resourceType))
 	}
 
-	return hclgen.WriteFile("locals.tf", file)
+	return hclgen.WriteFileToDir(outputDir, "locals.tf", file)
 }
 
-func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, secretPaths map[string]struct{}) hclwrite.Tokens {
+func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, secretPaths map[string]struct{}, moduleNamePrefix string) (hclwrite.Tokens, error) {
 	// schema represents the OpenAPI schema at root.properties.
 	// The Terraform variables are flattened to var.<child> rather than var.properties.<child>.
 
 	if schema == nil {
-		return hclwrite.TokensForIdentifier("null")
+		return hclwrite.TokensForIdentifier("null"), nil
 	}
 
 	// Get effective properties for allOf handling
 	effectiveProps, err := openapi.GetEffectiveProperties(schema)
 	if err != nil {
-		// Errors indicate cycles or conflicts which should fail generation
-		panic(fmt.Sprintf("failed to get effective properties in constructFlattenedRootPropertiesValue: %v", err))
+		return nil, fmt.Errorf("failed to get effective properties in constructFlattenedRootPropertiesValue: %w", err)
 	}
 
 	var attrs []hclwrite.ObjectAttrTokens
@@ -81,25 +84,32 @@ func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath h
 			}
 		}
 
-		snakeName := toSnakeCase(k)
+		snakeName := naming.ToSnakeCase(k)
+		// Rename variables that conflict with Terraform module meta-arguments
+		if moduleNamePrefix != "" && snakeName == "version" {
+			snakeName = moduleNamePrefix + "_version"
+		}
 		var childAccess hclwrite.Tokens
 		childAccess = append(childAccess, accessPath...)
 		childAccess = append(childAccess, &hclwrite.Token{Type: hclsyntax.TokenDot, Bytes: []byte(".")})
 		childAccess = append(childAccess, hclwrite.TokensForIdentifier(snakeName)...)
 
-		childValue := constructValue(prop.Value, childAccess, false, secretPaths, "properties."+k, false)
+		childValue, err := constructValue(prop.Value, childAccess, false, secretPaths, "properties."+k, false, moduleNamePrefix)
+		if err != nil {
+			return nil, err
+		}
 		attrs = append(attrs, hclwrite.ObjectAttrTokens{
 			Name:  tokensForObjectKey(k),
 			Value: childValue,
 		})
 	}
 
-	return hclwrite.TokensForObject(attrs)
+	return hclwrite.TokensForObject(attrs), nil
 }
 
-func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot bool, secretPaths map[string]struct{}, pathPrefix string, omitRootIdentity bool) hclwrite.Tokens {
+func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot bool, secretPaths map[string]struct{}, pathPrefix string, omitRootIdentity bool, moduleNamePrefix string) (hclwrite.Tokens, error) {
 	if schema.Type == nil {
-		return accessPath
+		return accessPath, nil
 	}
 
 	types := *schema.Type
@@ -107,7 +117,10 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 	if slices.Contains(types, "object") {
 		if len(schema.Properties) == 0 {
 			if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
-				mappedValue := constructValue(schema.AdditionalProperties.Schema.Value, hclwrite.TokensForIdentifier("value"), false, secretPaths, pathPrefix, false)
+				mappedValue, err := constructValue(schema.AdditionalProperties.Schema.Value, hclwrite.TokensForIdentifier("value"), false, secretPaths, pathPrefix, false, moduleNamePrefix)
+				if err != nil {
+					return nil, err
+				}
 
 				var tokens hclwrite.Tokens
 				tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")})
@@ -124,18 +137,17 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 				tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrace, Bytes: []byte("}")})
 
 				if !isRoot {
-					return hclgen.NullEqualityTernary(accessPath, tokens)
+					return hclgen.NullEqualityTernary(accessPath, tokens), nil
 				}
-				return tokens
+				return tokens, nil
 			}
-			return accessPath // map(string) or free-form, passed as is
+			return accessPath, nil // map(string) or free-form, passed as is
 		}
 
 		// Get effective properties for allOf handling
 		effectiveProps, err := openapi.GetEffectiveProperties(schema)
 		if err != nil {
-			// Errors indicate cycles or conflicts which should fail generation
-			panic(fmt.Sprintf("failed to get effective properties in constructValue: %v", err))
+			return nil, fmt.Errorf("failed to get effective properties in constructValue: %w", err)
 		}
 
 		var attrs []hclwrite.ObjectAttrTokens
@@ -173,7 +185,10 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 
 			// Flatten the top-level "properties" bag into separate variables.
 			if isRoot && k == "properties" && prop.Value.Type != nil && slices.Contains(*prop.Value.Type, "object") && len(prop.Value.Properties) > 0 {
-				childValue := constructFlattenedRootPropertiesValue(prop.Value, accessPath, secretPaths)
+				childValue, err := constructFlattenedRootPropertiesValue(prop.Value, accessPath, secretPaths, moduleNamePrefix)
+				if err != nil {
+					return nil, err
+				}
 				attrs = append(attrs, hclwrite.ObjectAttrTokens{
 					Name:  tokensForObjectKey(k),
 					Value: childValue,
@@ -181,13 +196,16 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 				continue
 			}
 
-			snakeName := toSnakeCase(k)
+			snakeName := naming.ToSnakeCase(k)
 			var childAccess hclwrite.Tokens
 			childAccess = append(childAccess, accessPath...)
 			childAccess = append(childAccess, &hclwrite.Token{Type: hclsyntax.TokenDot, Bytes: []byte(".")})
 			childAccess = append(childAccess, hclwrite.TokensForIdentifier(snakeName)...)
 
-			childValue := constructValue(prop.Value, childAccess, false, secretPaths, childPath, false)
+			childValue, err := constructValue(prop.Value, childAccess, false, secretPaths, childPath, false, moduleNamePrefix)
+			if err != nil {
+				return nil, err
+			}
 			attrs = append(attrs, hclwrite.ObjectAttrTokens{
 				Name:  tokensForObjectKey(k),
 				Value: childValue,
@@ -196,14 +214,17 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 
 		objTokens := hclwrite.TokensForObject(attrs)
 		if !isRoot {
-			return hclgen.NullEqualityTernary(accessPath, objTokens)
+			return hclgen.NullEqualityTernary(accessPath, objTokens), nil
 		}
-		return objTokens
+		return objTokens, nil
 	}
 
 	if slices.Contains(types, "array") {
 		if schema.Items != nil && schema.Items.Value != nil {
-			childValue := constructValue(schema.Items.Value, hclwrite.TokensForIdentifier("item"), false, secretPaths, pathPrefix+"[]", false)
+			childValue, err := constructValue(schema.Items.Value, hclwrite.TokensForIdentifier("item"), false, secretPaths, pathPrefix+"[]", false, moduleNamePrefix)
+			if err != nil {
+				return nil, err
+			}
 
 			var tokens hclwrite.Tokens
 			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")})
@@ -216,14 +237,14 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
 
 			if !isRoot {
-				return hclgen.NullEqualityTernary(accessPath, tokens)
+				return hclgen.NullEqualityTernary(accessPath, tokens), nil
 			}
-			return tokens
+			return tokens, nil
 		}
-		return accessPath
+		return accessPath, nil
 	}
 
-	return accessPath
+	return accessPath, nil
 }
 
 func tokensForManagedIdentitiesLocal() hclwrite.Tokens {
@@ -327,25 +348,18 @@ func tokensForPrivateEndpointsLocal(resourceType string) hclwrite.Tokens {
 
 	varPE := hclgen.TokensForTraversal("var", "private_endpoints")
 
-	if !hasDefault {
-		// No default mapping, just pass through the variable
-		var tokens hclwrite.Tokens
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("for")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(",")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("v")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("in")})
-		tokens = append(tokens, varPE...)
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenFatArrow, Bytes: []byte("=>")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("v")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrace, Bytes: []byte("}")})
-		return tokens
+	valueTokens := hclwrite.TokensForIdentifier("v")
+
+	if hasDefault {
+		vSubresource := hclgen.TokensForTraversal("v", "subresource_name")
+		coalesceCall := hclwrite.TokensForFunctionCall("coalesce", vSubresource, hclwrite.TokensForValue(cty.StringVal(defaultSubresource)))
+
+		mergeArg := hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+			{Name: hclwrite.TokensForIdentifier("subresource_name"), Value: coalesceCall},
+		})
+		valueTokens = hclwrite.TokensForFunctionCall("merge", hclwrite.TokensForIdentifier("v"), mergeArg)
 	}
 
-	// Has default mapping, use merge with coalesce
 	var tokens hclwrite.Tokens
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")})
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("for")})
@@ -357,17 +371,7 @@ func tokensForPrivateEndpointsLocal(resourceType string) hclwrite.Tokens {
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenFatArrow, Bytes: []byte("=>")})
-
-	// merge(v, { subresource_name = coalesce(v.subresource_name, "<default>") })
-	vSubresource := hclgen.TokensForTraversal("v", "subresource_name")
-	coalesceCall := hclwrite.TokensForFunctionCall("coalesce", vSubresource, hclwrite.TokensForValue(cty.StringVal(defaultSubresource)))
-
-	mergeArg2 := hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
-		{Name: hclwrite.TokensForIdentifier("subresource_name"), Value: coalesceCall},
-	})
-
-	mergeCall := hclwrite.TokensForFunctionCall("merge", hclwrite.TokensForIdentifier("v"), mergeArg2)
-	tokens = append(tokens, mergeCall...)
+	tokens = append(tokens, valueTokens...)
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrace, Bytes: []byte("}")})
 
 	return tokens

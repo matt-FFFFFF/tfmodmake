@@ -84,9 +84,15 @@ run_case \
   "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json" \
   "Microsoft.ContainerService/managedClusters"
 
-run_case \
-  "managedEnvironments" \
-  "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/app/resource-manager/Microsoft.App/ContainerApps/preview/2025-10-02-preview/ManagedEnvironments.json" \
-  "Microsoft.App/managedEnvironments"
+echo "== managedEnvironments (gen avm) =="
+workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
+WORKDIRS+=("$workdir")
+(cd "$workdir" && "$TFMODMAKE_BIN" gen avm \
+  -spec-root "https://github.com/Azure/azure-rest-api-specs/tree/main/specification/app/resource-manager/Microsoft.App/ContainerApps" \
+  -include-preview \
+  -resource Microsoft.App/managedEnvironments >/dev/null)
+(cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
+(cd "$workdir" && terraform validate -no-color >/dev/null)
+echo "ok"
 
 run_keyvault_case

@@ -75,6 +75,37 @@ The description-based path is only intended to bridge real-world gaps in upstrea
 - Description heuristics can be wrong.
 - If this becomes a broader pattern, we should prefer an explicit allowlist/override mechanism over additional string-matching heuristics.
 
+## Cross-Field Semantic Constraints (Not Expressible in OpenAPI)
+
+### The issue
+
+OpenAPI schemas can express individual field constraints (type, range, pattern, enum), but cannot express **cross-field semantic rules** like:
+
+- "If `internalLoadBalancerEnabled` is true, then `publicNetworkAccess` must be disabled"
+- "When `replicaCount` > 1, `storageType` must be `Premium`"
+- "Field A and field B are mutually exclusive"
+
+These are **service-level business rules** that live in the service implementation, not in the API schema.
+
+### Impact on code generation
+
+Tools like `tfmodmake` can only generate validations from **declarative schema constraints**. Semantic rules would require:
+
+- Per-resource custom logic (breaks the generic tool model)
+- Embedding service behavior knowledge
+- Maintenance burden as service semantics evolve
+
+Hand-crafted modules sometimes encode these rules manually, but that's intentional human curation, not automatable from specs.
+
+### Mitigation in `tfmodmake`
+
+tfmodmake **intentionally does not** attempt to infer or generate cross-field semantic validations. The principle:
+
+- Only generate validations that can be derived directly from schema constraints
+- Avoid encoding service semantics
+
+This keeps the tool generic, spec-driven, and maintainable across all Azure resources.
+
 ## Open Questions / Future Improvements
 
 - Add an explicit generator override mechanism for secrets (e.g. a CLI flag or config file listing JSON paths treated as secrets).

@@ -2,11 +2,11 @@ package terraform
 
 import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
-	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/hclgen"
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateTerraform() error {
+func generateTerraform(outputDir string) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -20,5 +20,5 @@ func generateTerraform() error {
 		"version": cty.StringVal("~> 2.7"),
 	}))
 
-	return hclgen.WriteFile("terraform.tf", file)
+	return hclgen.WriteFileToDir(outputDir, "terraform.tf", file)
 }

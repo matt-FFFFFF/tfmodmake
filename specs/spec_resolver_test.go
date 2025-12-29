@@ -1,4 +1,4 @@
-package main
+package specs
 
 import (
 	"bytes"
@@ -26,6 +26,6 @@ func TestDedupeResolvedSpecsPreserveOrder(t *testing.T) {
 
 func TestWriteResolvedSpecs_StableOnePerLine(t *testing.T) {
 	buf := new(bytes.Buffer)
-	writeResolvedSpecs(buf, []ResolvedSpec{{Source: "u1"}, {Source: "u2"}})
+	WriteResolvedSpecs(buf, []ResolvedSpec{{Source: "u1"}, {Source: "u2"}})
 	assert.Equal(t, "Resolved specs\nu1\nu2\n", buf.String())
 }

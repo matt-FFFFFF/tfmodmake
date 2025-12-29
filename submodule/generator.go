@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/hashicorp/terraform-config-inspect/tfconfig"
-	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/hclgen"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -139,7 +139,14 @@ func writeMainFile(moduleName, sourcePath string, module *tfconfig.Module) error
 			continue
 		}
 
-		blockBody.SetAttributeRaw(name, hclgen.TokensForTraversal("each", "value", name))
+		// Handle reserved Terraform module meta-arguments by prefixing with module name
+		// e.g., "version" becomes "dapr_component_version" in module call
+		argName := name
+		if name == "version" {
+			argName = fmt.Sprintf("%s_version", moduleName)
+		}
+
+		blockBody.SetAttributeRaw(argName, hclgen.TokensForTraversal("each", "value", name))
 	}
 
 	filename := fmt.Sprintf("main.%s.tf", moduleName)

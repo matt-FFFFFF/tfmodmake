@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
+	"github.com/matt-FFFFFF/tfmodmake/openapi"
 )
 
 func TestSupportsLocation_ManagedIdentityUserAssigned(t *testing.T) {
@@ -176,7 +176,7 @@ func TestAVMInterfacesScaffolding_ContainerAppsManagedEnvironments(t *testing.T)
 	require.NoError(t, err)
 
 	// Generate AVM interfaces explicitly (since it's no longer included in base generation)
-	err = GenerateInterfacesFile("Microsoft.App/managedEnvironments", doc)
+	err = GenerateInterfacesFile("Microsoft.App/managedEnvironments", doc, ".")
 	require.NoError(t, err)
 
 	// Check that main.interfaces.tf was generated
@@ -263,7 +263,7 @@ func TestAVMInterfacesScaffolding_AKSManagedClusters(t *testing.T) {
 	require.NoError(t, err)
 
 	// Generate AVM interfaces explicitly (since it's no longer included in base generation)
-	err = GenerateInterfacesFile("Microsoft.ContainerService/managedClusters", doc)
+	err = GenerateInterfacesFile("Microsoft.ContainerService/managedClusters", doc, ".")
 	require.NoError(t, err)
 
 	// Check that main.interfaces.tf was generated

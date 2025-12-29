@@ -144,3 +144,15 @@ func TokensForMultilineStringList(values []string) hclwrite.Tokens {
 func WriteFile(path string, file *hclwrite.File) error {
 	return os.WriteFile(path, file.Bytes(), 0o644)
 }
+
+// WriteFileToDir writes an HCL file to a specified directory.
+func WriteFileToDir(outputDir string, filename string, file *hclwrite.File) error {
+	if outputDir == "" {
+		outputDir = "."
+	}
+	path := filename
+	if outputDir != "." {
+		path = outputDir + "/" + filename
+	}
+	return os.WriteFile(path, file.Bytes(), 0o644)
+}

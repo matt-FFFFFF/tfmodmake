@@ -10,9 +10,10 @@ import (
 // InterfaceCapabilities represents which AVM interface scaffolding should be generated
 // based on evidence from the REST API specification.
 type InterfaceCapabilities struct {
-	SupportsPrivateEndpoints  bool
-	SupportsDiagnostics       bool
+	SupportsPrivateEndpoints   bool
+	SupportsDiagnostics        bool
 	SupportsCustomerManagedKey bool
+	SupportsManagedIdentity    bool
 	// Lock and RoleAssignments are ARM-level capabilities not detectable from individual resource specs
 }
 
@@ -35,6 +36,9 @@ func DetectInterfaceCapabilities(spec *openapi3.T, resourceType string) Interfac
 
 	// Check for customer-managed key support by looking for encryption properties in the schema
 	caps.SupportsCustomerManagedKey = detectCustomerManagedKeySupport(spec, resourceType)
+
+	// Check for managed identity support by looking for identity property in the schema
+	caps.SupportsManagedIdentity = detectManagedIdentitySupport(spec, resourceType)
 
 	return caps
 }
@@ -151,6 +155,94 @@ func hasEncryptionProperty(schema *openapi3.Schema) bool {
 		// Check nested properties object
 		if propName == "properties" && propRef.Value.Type != nil && slices.Contains(*propRef.Value.Type, "object") {
 			if hasEncryptionProperty(propRef.Value) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// detectManagedIdentitySupport checks if the schema includes identity property.
+// Most Azure resources that support managed identity have an "identity" property in their schema.
+func detectManagedIdentitySupport(spec *openapi3.T, resourceType string) bool {
+	if spec.Components == nil || spec.Components.Schemas == nil {
+		return false
+	}
+
+	// Check PUT operation request body schema for identity property
+	for path, pathItem := range spec.Paths.Map() {
+		if pathItem == nil {
+			continue
+		}
+
+		// Only check PUT operations (create/update)
+		if pathItem.Put == nil {
+			continue
+		}
+
+		// Check if this path matches the resource type
+		if !strings.Contains(strings.ToLower(path), strings.ToLower(resourceType)) {
+			continue
+		}
+
+		var schema *openapi3.Schema
+
+		// Check RequestBody (OpenAPI 3)
+		if pathItem.Put.RequestBody != nil && pathItem.Put.RequestBody.Value != nil {
+			for _, content := range pathItem.Put.RequestBody.Value.Content {
+				if content.Schema != nil && content.Schema.Value != nil {
+					schema = content.Schema.Value
+					break
+				}
+			}
+		}
+
+		// Fallback for Swagger/OpenAPI v2 specs (body parameter)
+		if schema == nil {
+			for _, paramRef := range pathItem.Put.Parameters {
+				if paramRef.Value != nil && paramRef.Value.In == "body" && paramRef.Value.Schema != nil {
+					schema = paramRef.Value.Schema.Value
+					break
+				}
+			}
+		}
+
+		if schema != nil && hasIdentityProperty(schema) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasIdentityProperty recursively checks if a schema has an identity property
+func hasIdentityProperty(schema *openapi3.Schema) bool {
+	if schema == nil {
+		return false
+	}
+
+	// Get effective properties (handles allOf)
+	props, err := GetEffectiveProperties(schema)
+	if err != nil {
+		return false
+	}
+
+	for propName, propRef := range props {
+		if propRef == nil || propRef.Value == nil {
+			continue
+		}
+
+		propNameLower := strings.ToLower(propName)
+
+		// Check for identity property
+		if propNameLower == "identity" {
+			return true
+		}
+
+		// Check nested properties object
+		if propName == "properties" && propRef.Value.Type != nil && slices.Contains(*propRef.Value.Type, "object") {
+			if hasIdentityProperty(propRef.Value) {
 				return true
 			}
 		}

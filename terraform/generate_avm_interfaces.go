@@ -2,8 +2,8 @@ package terraform
 
 import (
 	"github.com/hashicorp/hcl/v2/hclwrite"
-	"github.com/matt-FFFFFF/tfmodmake/internal/hclgen"
-	"github.com/matt-FFFFFF/tfmodmake/internal/openapi"
+	"github.com/matt-FFFFFF/tfmodmake/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/openapi"
 	"github.com/zclconf/go-cty/cty"
 	"strings"
 )
@@ -108,7 +108,7 @@ func privateEndpointDefaultSubresource(resourceType string) (string, bool) {
 
 // generateInterfaces creates main.interfaces.tf with the AVM interfaces module wiring.
 // Only includes interface wiring for capabilities with swagger evidence.
-func generateInterfaces(resourceType string, caps openapi.InterfaceCapabilities) error {
+func generateInterfaces(resourceType string, caps openapi.InterfaceCapabilities, outputDir string) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -146,5 +146,5 @@ func generateInterfaces(resourceType string, caps openapi.InterfaceCapabilities)
 	// Note: Lock and role_assignments are ARM-level capabilities not reliably detectable from specs.
 	// They are intentionally omitted. Use a separate helper command to add them if needed.
 
-	return hclgen.WriteFile("main.interfaces.tf", file)
+	return hclgen.WriteFileToDir(outputDir, "main.interfaces.tf", file)
 }
