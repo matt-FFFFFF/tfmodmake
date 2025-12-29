@@ -22,7 +22,7 @@ func cleanTypeString(typeStr string) string {
 	return strings.Join(cleaned, "/")
 }
 
-func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema bool, secrets []secretField) error {
+func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema bool, secrets []secretField, outputDir string) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -108,5 +108,5 @@ func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName s
 		resourceBody.SetAttributeValue("response_export_values", cty.ListValEmpty(cty.String))
 	}
 
-	return hclgen.WriteFile("main.tf", file)
+	return hclgen.WriteFileToDir(outputDir, "main.tf", file)
 }

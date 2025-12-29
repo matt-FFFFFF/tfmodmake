@@ -14,7 +14,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string, caps openapi.InterfaceCapabilities, moduleNamePrefix string) error {
+func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string, caps openapi.InterfaceCapabilities, moduleNamePrefix string, outputDir string) error {
 	if schema == nil {
 		return nil
 	}
@@ -43,7 +43,7 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 		localBody.SetAttributeRaw("private_endpoints", tokensForPrivateEndpointsLocal(resourceType))
 	}
 
-	return hclgen.WriteFile("locals.tf", file)
+	return hclgen.WriteFileToDir(outputDir, "locals.tf", file)
 }
 
 func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, secretPaths map[string]struct{}, moduleNamePrefix string) (hclwrite.Tokens, error) {
@@ -348,25 +348,18 @@ func tokensForPrivateEndpointsLocal(resourceType string) hclwrite.Tokens {
 
 	varPE := hclgen.TokensForTraversal("var", "private_endpoints")
 
-	if !hasDefault {
-		// No default mapping, just pass through the variable
-		var tokens hclwrite.Tokens
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("for")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(",")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("v")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("in")})
-		tokens = append(tokens, varPE...)
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenFatArrow, Bytes: []byte("=>")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("v")})
-		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrace, Bytes: []byte("}")})
-		return tokens
+	valueTokens := hclwrite.TokensForIdentifier("v")
+
+	if hasDefault {
+		vSubresource := hclgen.TokensForTraversal("v", "subresource_name")
+		coalesceCall := hclwrite.TokensForFunctionCall("coalesce", vSubresource, hclwrite.TokensForValue(cty.StringVal(defaultSubresource)))
+
+		mergeArg := hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
+			{Name: hclwrite.TokensForIdentifier("subresource_name"), Value: coalesceCall},
+		})
+		valueTokens = hclwrite.TokensForFunctionCall("merge", hclwrite.TokensForIdentifier("v"), mergeArg)
 	}
 
-	// Has default mapping, use merge with coalesce
 	var tokens hclwrite.Tokens
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenOBrace, Bytes: []byte("{")})
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("for")})
@@ -378,17 +371,7 @@ func tokensForPrivateEndpointsLocal(resourceType string) hclwrite.Tokens {
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenColon, Bytes: []byte(":")})
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenIdent, Bytes: []byte("k")})
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenFatArrow, Bytes: []byte("=>")})
-
-	// merge(v, { subresource_name = coalesce(v.subresource_name, "<default>") })
-	vSubresource := hclgen.TokensForTraversal("v", "subresource_name")
-	coalesceCall := hclwrite.TokensForFunctionCall("coalesce", vSubresource, hclwrite.TokensForValue(cty.StringVal(defaultSubresource)))
-
-	mergeArg2 := hclwrite.TokensForObject([]hclwrite.ObjectAttrTokens{
-		{Name: hclwrite.TokensForIdentifier("subresource_name"), Value: coalesceCall},
-	})
-
-	mergeCall := hclwrite.TokensForFunctionCall("merge", hclwrite.TokensForIdentifier("v"), mergeArg2)
-	tokens = append(tokens, mergeCall...)
+	tokens = append(tokens, valueTokens...)
 	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrace, Bytes: []byte("}")})
 
 	return tokens

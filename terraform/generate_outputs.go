@@ -14,7 +14,7 @@ import (
 // generateOutputs creates the outputs.tf file with AVM-compliant outputs.
 // Always includes the mandatory AVM outputs: resource_id and name.
 // Also includes outputs for computed/readOnly exported attributes when schema is available.
-func generateOutputs(schema *openapi3.Schema) error {
+func generateOutputs(schema *openapi3.Schema, outputDir string) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -69,7 +69,7 @@ func generateOutputs(schema *openapi3.Schema) error {
 		}
 	}
 
-	return hclgen.WriteFile("outputs.tf", file)
+	return hclgen.WriteFileToDir(outputDir, "outputs.tf", file)
 }
 
 func schemaForExportPath(schema *openapi3.Schema, exportPath string) *openapi3.Schema {

@@ -206,7 +206,7 @@ func handleAddAVMInterfacesCommand() {
 	}
 	// If no spec provided, doc will be nil and no interface capabilities will be detected
 
-	if err := terraform.GenerateInterfacesFile(finalResourceType, doc); err != nil {
+	if err := terraform.GenerateInterfacesFile(finalResourceType, doc, "."); err != nil {
 		log.Fatalf("Failed to generate AVM interfaces: %v", err)
 	}
 
@@ -530,12 +530,14 @@ func generateChildModule(specs []string, childType, modulePath string) error {
 	// Derive module name for variable renaming context
 	moduleName := deriveModuleName(childType)
 
+	// Ensure module directory exists
+	if err := os.MkdirAll(modulePath, 0o755); err != nil {
+		return fmt.Errorf("failed to create module directory %s: %w", modulePath, err)
+	}
+
 	// Generate Terraform files in the module directory
-	// We need to temporarily change directory because terraform.Generate writes to the current directory
-	if err := generateInDirectory(modulePath, func() error {
-		localName := "resource_body"
-		return terraform.GenerateWithContext(schema, childType, localName, apiVersion, supportsTags, supportsLocation, nameSchema, doc, moduleName)
-	}); err != nil {
+	localName := "resource_body"
+	if err := terraform.GenerateWithContext(schema, childType, localName, apiVersion, supportsTags, supportsLocation, nameSchema, doc, moduleName, modulePath); err != nil {
 		return fmt.Errorf("failed to generate terraform files: %w", err)
 	}
 
@@ -772,7 +774,7 @@ func orchestrateAVMGeneration(specSources []string, resourceType, rootPath, loca
 			break
 		}
 	}
-	if err := terraform.GenerateInterfacesFile(resourceType, doc); err != nil {
+	if err := terraform.GenerateInterfacesFile(resourceType, doc, "."); err != nil {
 		return fmt.Errorf("failed to generate AVM interfaces: %w", err)
 	}
 
