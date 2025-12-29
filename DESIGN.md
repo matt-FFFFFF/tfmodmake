@@ -243,6 +243,7 @@ Investigation of real OpenAPI specs vs ARM platform capabilities revealed:
 4. **Minimal dependencies** - Only essential libraries (OpenAPI parser, HCL writer)
 5. **Composable packages** - Each package has single, clear responsibility
 6. **Explicit over implicit** - Prefer verbose clarity to magic behavior
+7. **Schema-only validations** - Generate validations only from declarative schema constraints, not cross-field semantic rules (see [rest-api-issues.md](docs/rest-api-issues.md#cross-field-semantic-constraints-not-expressible-in-openapi))
 
 ---
 
