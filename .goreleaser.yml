@@ -1,0 +1,66 @@
+---
+version: 2
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: tfmodmake
+    env:
+      # goreleaser does not work with CGO, it could also complicate
+      # usage by users in CI/CD systems like Terraform Cloud where
+      # they are unable to install libraries.
+      - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - '-s -w -X "github.com/matt-FFFFFF/alzlib/cmd/tfmodmake.version={{.Version}}" -X'
+    goos:
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    binary: "tfmodmake"
+    dir: cmd/tfmodmake
+checksum:
+  name_template: "checksums.txt"
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+archives:
+  - id: alzlibtool
+    formats: [tar.gz]
+    ids:
+      - tfmodmake
+    name_template: "tfmodmake_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - formats: [zip]
+        goos: windows
+    builds_info:
+      group: root
+      owner: root
+      mode: 0755
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "Doc updates"
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: "Other updates"
+      order: 999
+release:
+  disable: false
+milestones:
+  - close: true
+# The lines beneath this are called `modelines`. See `:help modeline`
+# Feel free to remove those if you don't want/use them.
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj

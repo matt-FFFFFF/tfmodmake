@@ -17,7 +17,7 @@ func emitCustomerManagedKeyVar(body *hclwrite.Body, caps openapi.InterfaceCapabi
 	if !caps.SupportsCustomerManagedKey {
 		return
 	}
-	
+
 	appendTFLintIgnoreUnused()
 	cmkBody := appendVariable(
 		"customer_managed_key",
@@ -62,7 +62,7 @@ func emitDiagnosticSettingsVar(body *hclwrite.Body, caps openapi.InterfaceCapabi
 	if !caps.SupportsDiagnostics {
 		return
 	}
-	
+
 	diagBody := appendVariable(
 		"diagnostic_settings",
 		"A map of diagnostic settings to create on the resource.",
@@ -81,7 +81,7 @@ func emitDiagnosticSettingsVar(body *hclwrite.Body, caps openapi.InterfaceCapabi
 	)
 	diagBody.SetAttributeValue("default", cty.MapValEmpty(cty.DynamicPseudoType))
 	diagBody.SetAttributeValue("nullable", cty.False)
-	
+
 	// Add validations
 	addDiagnosticSettingsValidations(diagBody)
 	body.AppendNewline()
@@ -118,7 +118,7 @@ func addDiagnosticSettingsValidations(diagBody *hclwrite.Body) {
 		validationBody.SetAttributeRaw("condition", hclwrite.TokensForFunctionCall("alltrue", listComp))
 		validationBody.SetAttributeValue("error_message", cty.StringVal("Log analytics destination type must be one of: 'Dedicated', 'AzureDiagnostics'."))
 	}
-	
+
 	// Validation 2: at least one destination must be set
 	{
 		validation := diagBody.AppendNewBlock("validation", nil)
@@ -165,7 +165,7 @@ func emitPrivateEndpointsVars(body *hclwrite.Body, caps openapi.InterfaceCapabil
 	if !caps.SupportsPrivateEndpoints {
 		return
 	}
-	
+
 	peBody := appendVariable(
 		"private_endpoints",
 		"A map of private endpoints to create on this resource.",

@@ -277,56 +277,6 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 			continue
 		}
 
-		// Flatten the top-level "properties" bag into individual variables.
-		if name == "properties" {
-			propEffectiveProps, err := openapi.GetEffectiveProperties(propSchema)
-			if err != nil {
-				return fmt.Errorf("getting effective properties for 'properties': %w", err)
-			}
-			propEffectiveRequired, err := openapi.GetEffectiveRequired(propSchema)
-			if err != nil {
-				return fmt.Errorf("getting effective required for 'properties': %w", err)
-			}
-
-			if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propEffectiveProps) > 0 {
-				var childKeys []string
-				for ck := range propEffectiveProps {
-					childKeys = append(childKeys, ck)
-				}
-				sort.Strings(childKeys)
-
-				for _, ck := range childKeys {
-					childRef := propEffectiveProps[ck]
-					if childRef == nil || childRef.Value == nil {
-						continue
-					}
-					childSchema := childRef.Value
-					if !isWritableProperty(childSchema) {
-						continue
-					}
-					tfName := naming.ToSnakeCase(ck)
-					if tfName == "" {
-						return fmt.Errorf("could not derive terraform variable name for properties.%s", ck)
-					}
-					// Rename variables that conflict with Terraform module meta-arguments
-					if moduleNamePrefix != "" && tfName == "version" {
-						tfName = moduleNamePrefix + "_version"
-					}
-					if _, exists := seenNames[tfName]; exists {
-						return fmt.Errorf("terraform variable name collision: %q (from properties.%s)", tfName, ck)
-					}
-					seenNames[tfName] = struct{}{}
-
-					if _, err := appendSchemaVariable(tfName, ck, childSchema, propEffectiveRequired); err != nil {
-						return err
-					}
-					body.AppendNewline()
-				}
-				continue
-			}
-			// If "properties" isn't a concrete object, fall back to the old behavior.
-		}
-
 		tfName := naming.ToSnakeCase(name)
 		if tfName == "" {
 			return fmt.Errorf("could not derive terraform variable name for %s", name)

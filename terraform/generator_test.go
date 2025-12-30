@@ -88,7 +88,8 @@ func TestGenerate(t *testing.T) {
 	supportsLocation := SupportsLocation(schema)
 
 	apiVersion := "2024-01-01"
-	err = Generate(schema, "testResource", "test_local", apiVersion, supportsTags, supportsLocation, nil, nil)
+	propSchema := schema.Properties["properties"].Value
+	err = Generate(propSchema, "testResource", "test_local", apiVersion, supportsTags, supportsLocation, schema, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
