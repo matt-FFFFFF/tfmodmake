@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -22,11 +23,16 @@ type ResourceLoadResult struct {
 
 // LoadResourceFromSpecs attempts to find and load a resource type from a list of specs.
 // It returns the first successful match or an error with details about failures.
-func LoadResourceFromSpecs(specs []string, resourceType string) (*ResourceLoadResult, error) {
+func LoadResourceFromSpecs(ctx context.Context, specs []string, resourceType string) (*ResourceLoadResult, error) {
 	var loadErrors []string
 	var searchErrors []string
 
 	for _, specPath := range specs {
+		// Check context cancellation
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		loadedDoc, err := openapi.LoadSpec(specPath)
 		if err != nil {
 			loadErrors = append(loadErrors, fmt.Sprintf("- %s: %v", specPath, err))
