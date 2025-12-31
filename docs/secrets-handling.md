@@ -528,7 +528,7 @@ Fields marked as both `readOnly: true` and `x-ms-secret: true` are ignored (they
 Error: terraform variable name collision: "api_key" (from properties.apiKey)
 ```
 
-Occurs when a secret variable name conflicts with an existing variable. Resolution: manually rename one of the properties or use `-root` flag to scope generation.
+Occurs when a secret variable name conflicts with an existing variable. Resolution: manually rename one of the generated Terraform variables (and update any references in `locals.tf`/`main.tf`) to eliminate the collision.
 
 ### Missing Version When Secret is Set
 

@@ -273,6 +273,68 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 		}
 		propSchema := prop.Value
 
+		// Flatten the standard ARM top-level "properties" bag into individual Terraform variables.
+		// This is the default module shape for full-schema generation (no -root), per DESIGN.md.
+		if name == "properties" && propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") {
+			propsSchema := propSchema
+
+			childProps, err := openapi.GetEffectiveProperties(propsSchema)
+			if err != nil {
+				return fmt.Errorf("getting effective properties for root properties bag: %w", err)
+			}
+			childRequired, err := openapi.GetEffectiveRequired(propsSchema)
+			if err != nil {
+				return fmt.Errorf("getting effective required for root properties bag: %w", err)
+			}
+			if len(childProps) == 0 {
+				continue
+			}
+
+			var childKeys []string
+			for k := range childProps {
+				childKeys = append(childKeys, k)
+			}
+			sort.Strings(childKeys)
+
+			for _, childName := range childKeys {
+				childRef := childProps[childName]
+				if childRef == nil || childRef.Value == nil {
+					continue
+				}
+				childSchema := childRef.Value
+				if !isWritableProperty(childSchema) {
+					continue
+				}
+
+				tfName := naming.ToSnakeCase(childName)
+				if tfName == "" {
+					return fmt.Errorf("could not derive terraform variable name for %s", childName)
+				}
+				// Rename variables that conflict with Terraform module meta-arguments
+				if moduleNamePrefix != "" && tfName == "version" {
+					tfName = moduleNamePrefix + "_version"
+				}
+
+				// A collision under flattened root properties is a hard error: users would have no way
+				// to configure that field.
+				if _, reserved := reservedNames[tfName]; reserved {
+					return fmt.Errorf("terraform variable name collision: %q (from properties.%s)", tfName, childName)
+				}
+				if _, exists := seenNames[tfName]; exists {
+					return fmt.Errorf("terraform variable name collision: %q (from properties.%s)", tfName, childName)
+				}
+				seenNames[tfName] = struct{}{}
+
+				if _, err := appendSchemaVariable(tfName, childName, childSchema, childRequired); err != nil {
+					return err
+				}
+
+				body.AppendNewline()
+			}
+
+			continue
+		}
+
 		if !isWritableProperty(propSchema) {
 			continue
 		}

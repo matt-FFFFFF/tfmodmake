@@ -1,8 +1,7 @@
 name: CI
 
 on:
-  # TODO add PR workflow back later
-  #pull_request:
+  pull_request:
   push:
     branches:
       - main
@@ -17,8 +16,12 @@ jobs:
     name: Go tests + Terraform examples
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+
     env:
       TF_IN_AUTOMATION: "true"
+      GITHUB_TOKEN: ${{ github.token }}
 
     steps:
       - name: Checkout

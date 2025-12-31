@@ -88,8 +88,7 @@ func TestGenerate(t *testing.T) {
 	supportsLocation := SupportsLocation(schema)
 
 	apiVersion := "2024-01-01"
-	propSchema := schema.Properties["properties"].Value
-	err = Generate(propSchema, "testResource", "test_local", apiVersion, supportsTags, supportsLocation, schema, nil)
+	err = Generate(schema, "testResource", "resource_body", apiVersion, supportsTags, supportsLocation, schema, nil)
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -117,9 +116,9 @@ func TestGenerate(t *testing.T) {
 
 	localsBody := parseHCLBody(t, "locals.tf")
 	localsBlock := requireBlock(t, localsBody, "locals")
-	localAttr := localsBlock.Body.Attributes["test_local"]
+	localAttr := localsBlock.Body.Attributes["resource_body"]
 	localExpr := expressionString(t, localAttr.Expr)
-	assert.Contains(t, localExpr, "location = var.location")
+	assert.NotContains(t, localExpr, "location")
 	assert.Contains(t, localExpr, "writableProp = var.writable_prop")
 	assert.NotContains(t, localExpr, "readOnlyProp")
 	assert.NotContains(t, localExpr, "var.properties")
@@ -131,7 +130,7 @@ func TestGenerate(t *testing.T) {
 	assert.Equal(t, "var.parent_id", expressionString(t, resourceBlock.Body.Attributes["parent_id"].Expr))
 	assert.Equal(t, "var.location", expressionString(t, resourceBlock.Body.Attributes["location"].Expr))
 	bodyExpr := expressionString(t, resourceBlock.Body.Attributes["body"].Expr)
-	assert.Equal(t, "local.test_local", strings.TrimSpace(bodyExpr))
+	assert.Equal(t, "local.resource_body", strings.TrimSpace(bodyExpr))
 	assert.Nil(t, resourceBlock.Body.Attributes["tags"])
 
 	outputsBody := parseHCLBody(t, "outputs.tf")
@@ -752,22 +751,15 @@ func TestMapType(t *testing.T) {
 
 func TestBuildNestedDescription(t *testing.T) {
 	schema := &openapi3.Schema{
+		Type: &openapi3.Types{"object"},
 		Properties: map[string]*openapi3.SchemaRef{
-			"prop1": {
-				Value: &openapi3.Schema{
-					Description: "Description 1",
-				},
-			},
+			"prop1": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}, Description: "Description 1"}},
 			"nested": {
 				Value: &openapi3.Schema{
 					Type:        &openapi3.Types{"object"},
 					Description: "Nested object",
 					Properties: map[string]*openapi3.SchemaRef{
-						"child": {
-							Value: &openapi3.Schema{
-								Description: "Child description",
-							},
-						},
+						"child": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}, Description: "Child description"}},
 					},
 				},
 			},
