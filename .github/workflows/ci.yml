@@ -2,10 +2,9 @@ name: CI
 
 on:
   pull_request:
-  push:
     branches:
       - main
-      - dev
+  push:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -25,22 +24,22 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
 
+      - name: Go test
+        run: make test
+
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.12.0
           terraform_wrapper: false
-
-      - name: Run Go tests
-        run: go test ./...
 
       - name: Validate generated examples
         run: make test-examples
