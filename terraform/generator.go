@@ -8,59 +8,139 @@ import (
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 )
 
-type Generator struct {
-	opts *generatorOptions
+// GeneratorOption is a function that configures the generator.
+type GeneratorOption func(*generatorOptions)
+
+type generatorOptions struct {
+	schema           *openapi3.Schema
+	resourceType     string
+	localName        string
+	apiVersion       string
+	supportsTags     bool
+	supportsLocation bool
+	spec             *openapi3.T
+	moduleNamePrefix string
+	outputDir        string
 }
 
-type generatorOptions struct{}
+// WithSchema sets the OpenAPI schema for the resource.
+func WithSchema(schema *openapi3.Schema) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.schema = schema
+	}
+}
+
+// WithLocalName sets the local variable name for the resource body.
+func WithLocalName(name string) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.localName = name
+	}
+}
+
+// WithAPIVersion sets the API version for the resource.
+func WithAPIVersion(version string) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.apiVersion = version
+	}
+}
+
+// WithSupportsTags sets whether the resource supports tags.
+func WithSupportsTags(supports bool) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.supportsTags = supports
+	}
+}
+
+// WithSupportsLocation sets whether the resource supports location.
+func WithSupportsLocation(supports bool) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.supportsLocation = supports
+	}
+}
+
+// WithSpec sets the full OpenAPI spec document.
+func WithSpec(spec *openapi3.T) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.spec = spec
+	}
+}
+
+// WithModuleNamePrefix sets a prefix for module names to avoid conflicts.
+func WithModuleNamePrefix(prefix string) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.moduleNamePrefix = prefix
+	}
+}
+
+// WithOutputDir sets the directory where files will be generated.
+func WithOutputDir(dir string) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.outputDir = dir
+	}
+}
+
+// WithLoadResult sets multiple options from a ResourceLoadResult.
+func WithLoadResult(result *ResourceLoadResult) GeneratorOption {
+	return func(o *generatorOptions) {
+		o.schema = result.Schema
+		o.apiVersion = result.APIVersion
+		o.supportsTags = result.SupportsTags
+		o.supportsLocation = result.SupportsLocation
+		o.spec = result.Doc
+	}
+}
 
 // Generate generates variables.tf, locals.tf, main.tf, and outputs.tf based on the schema.
-//
-// The spec parameter is used to detect which AVM interface capabilities are supported and to find the name schema.
-// The optional moduleNamePrefix is used to rename variables that conflict with Terraform module meta-arguments (e.g., "version" -> "dapr_component_version").
-// Files are written to the current directory.
-func Generate(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, spec *openapi3.T) error {
-	return GenerateWithContext(schema, resourceType, localName, apiVersion, supportsTags, supportsLocation, spec, "", ".")
+func Generate(resourceType string, opts ...GeneratorOption) error {
+	o := &generatorOptions{
+		resourceType: resourceType,
+		outputDir:    ".",
+		localName:    "resource_body",
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	return generateWithOpts(o)
 }
 
-// GenerateWithContext is like Generate but accepts a moduleNamePrefix for renaming reserved variable names and an outputDir for where to write files.
-func GenerateWithContext(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, spec *openapi3.T, moduleNamePrefix string, outputDir string) error {
-	hasSchema := schema != nil
-	supportsIdentity := SupportsIdentity(schema)
+func generateWithOpts(o *generatorOptions) error {
+	hasSchema := o.schema != nil
+	supportsIdentity := SupportsIdentity(o.schema)
 
 	// Detect interface capabilities from spec
 	var caps openapi.InterfaceCapabilities
 	var nameSchema *openapi3.Schema
-	if spec != nil {
-		caps = openapi.DetectInterfaceCapabilities(spec, resourceType)
-		nameSchema, _ = openapi.FindResourceNameSchema(spec, resourceType)
+	if o.spec != nil {
+		caps = openapi.DetectInterfaceCapabilities(o.spec, o.resourceType)
+		nameSchema, _ = openapi.FindResourceNameSchema(o.spec, o.resourceType)
 	}
 
 	// Collect secret fields from schema
 	var secrets []secretField
 	if hasSchema {
 		var err error
-		secrets, err = collectSecretFields(schema, "")
+		secrets, err = collectSecretFields(o.schema, "")
 		if err != nil {
 			return fmt.Errorf("collecting secret fields: %w", err)
 		}
 	}
 
-	if err := generateTerraform(outputDir); err != nil {
+	if err := generateTerraform(o.outputDir); err != nil {
 		return err
 	}
-	if err := generateVariables(schema, supportsTags, supportsLocation, supportsIdentity, secrets, nameSchema, caps, moduleNamePrefix, outputDir); err != nil {
+	if err := generateVariables(o.schema, o.supportsTags, o.supportsLocation, supportsIdentity, secrets, nameSchema, caps, o.moduleNamePrefix, o.outputDir); err != nil {
 		return err
 	}
 	if hasSchema {
-		if err := generateLocals(schema, localName, supportsIdentity, secrets, resourceType, caps, moduleNamePrefix, outputDir); err != nil {
+		if err := generateLocals(o.schema, o.localName, supportsIdentity, secrets, o.resourceType, caps, o.moduleNamePrefix, o.outputDir); err != nil {
 			return err
 		}
 	}
-	if err := generateMain(schema, resourceType, apiVersion, localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, secrets, outputDir); err != nil {
+	if err := generateMain(o.schema, o.resourceType, o.apiVersion, o.localName, o.supportsTags, o.supportsLocation, supportsIdentity, hasSchema, secrets, o.outputDir); err != nil {
 		return err
 	}
-	if err := generateOutputs(schema, outputDir); err != nil {
+	if err := generateOutputs(o.schema, o.outputDir); err != nil {
 		return err
 	}
 	return nil

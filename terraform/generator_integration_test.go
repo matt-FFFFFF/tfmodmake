@@ -56,7 +56,7 @@ func TestResponseExportValues_ContainerAppsManagedEnvironments(t *testing.T) {
 	supportsLocation := SupportsLocation(schema)
 	apiVersion := doc.Info.Version
 
-	err = Generate(schema, "Microsoft.App/managedEnvironments", "resource_body", apiVersion, supportsTags, supportsLocation, doc)
+	err = Generate("Microsoft.App/managedEnvironments", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion(apiVersion), WithSupportsTags(supportsTags), WithSupportsLocation(supportsLocation), WithSpec(doc))
 	require.NoError(t, err)
 
 	mainBytes, err := os.ReadFile("main.tf")
@@ -111,7 +111,7 @@ func TestResponseExportValues_AKSManagedClusters(t *testing.T) {
 	supportsTags := SupportsTags(schema)
 	supportsLocation := SupportsLocation(schema)
 	apiVersion := doc.Info.Version
-	err = Generate(schema, "Microsoft.ContainerService/managedClusters", "resource_body", apiVersion, supportsTags, supportsLocation, doc)
+	err = Generate("Microsoft.ContainerService/managedClusters", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion(apiVersion), WithSupportsTags(supportsTags), WithSupportsLocation(supportsLocation), WithSpec(doc))
 	require.NoError(t, err)
 
 	mainBytes, err := os.ReadFile("main.tf")
@@ -169,7 +169,7 @@ func TestAVMInterfacesScaffolding_ContainerAppsManagedEnvironments(t *testing.T)
 	supportsLocation := SupportsLocation(schema)
 	apiVersion := doc.Info.Version
 
-	err = Generate(schema, "Microsoft.App/managedEnvironments", "resource_body", apiVersion, supportsTags, supportsLocation, doc)
+	err = Generate("Microsoft.App/managedEnvironments", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion(apiVersion), WithSupportsTags(supportsTags), WithSupportsLocation(supportsLocation), WithSpec(doc))
 	require.NoError(t, err)
 
 	// Generate AVM interfaces explicitly (since it's no longer included in base generation)
@@ -255,7 +255,7 @@ func TestAVMInterfacesScaffolding_AKSManagedClusters(t *testing.T) {
 	supportsLocation := SupportsLocation(schema)
 	apiVersion := doc.Info.Version
 
-	err = Generate(schema, "Microsoft.ContainerService/managedClusters", "resource_body", apiVersion, supportsTags, supportsLocation, doc)
+	err = Generate("Microsoft.ContainerService/managedClusters", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion(apiVersion), WithSupportsTags(supportsTags), WithSupportsLocation(supportsLocation), WithSpec(doc))
 	require.NoError(t, err)
 
 	// Generate AVM interfaces explicitly (since it's no longer included in base generation)
@@ -314,7 +314,7 @@ func TestAVMInterfacesScaffolding_LocationAlwaysPresent(t *testing.T) {
 	supportsLocation := SupportsLocation(schema)
 	apiVersion := doc.Info.Version
 
-	err = Generate(schema, "Microsoft.ManagedIdentity/userAssignedIdentities", "resource_body", apiVersion, supportsTags, supportsLocation, doc)
+	err = Generate("Microsoft.ManagedIdentity/userAssignedIdentities", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion(apiVersion), WithSupportsTags(supportsTags), WithSupportsLocation(supportsLocation), WithSpec(doc))
 	require.NoError(t, err)
 
 	// Check that variables.tf contains location variable
