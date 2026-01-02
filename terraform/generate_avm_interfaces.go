@@ -1,11 +1,12 @@
 package terraform
 
 import (
+	"strings"
+
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 	"github.com/zclconf/go-cty/cty"
-	"strings"
 )
 
 // privateEndpointSubresourcesByResourceType provides a mapping of ARM resource types to their
@@ -16,22 +17,22 @@ var privateEndpointSubresourcesByResourceType = map[string][]string{
 	// Source: https://learn.microsoft.com/en-us/azure/private-link/private-endpoint-dns
 	// NOTE: Keys are normalized to strings.ToLower(resourceType).
 	strings.ToLower("Microsoft.MachineLearningServices/workspaces"): {"amlworkspace"},
-	strings.ToLower("Microsoft.MachineLearningServices/registries"):  {"amlregistry"},
-	strings.ToLower("Microsoft.CognitiveServices/accounts"):          {"account"},
+	strings.ToLower("Microsoft.MachineLearningServices/registries"): {"amlregistry"},
+	strings.ToLower("Microsoft.CognitiveServices/accounts"):         {"account"},
 	strings.ToLower("Microsoft.BotService/botServices"):             {"Bot", "Token"},
 
-	strings.ToLower("Microsoft.Synapse/workspaces"):       {"Sql", "SqlOnDemand", "Dev"},
-	strings.ToLower("Microsoft.Synapse/privateLinkHubs"):  {"Web"},
-	strings.ToLower("Microsoft.EventHub/namespaces"):      {"namespace"},
-	strings.ToLower("Microsoft.ServiceBus/namespaces"):    {"namespace"},
-	strings.ToLower("Microsoft.DataFactory/factories"):    {"dataFactory", "portal"},
-	strings.ToLower("Microsoft.HDInsight/clusters"):       {"gateway", "headnode"},
-	strings.ToLower("Microsoft.Kusto/Clusters"):           {"cluster"},
+	strings.ToLower("Microsoft.Synapse/workspaces"):                    {"Sql", "SqlOnDemand", "Dev"},
+	strings.ToLower("Microsoft.Synapse/privateLinkHubs"):               {"Web"},
+	strings.ToLower("Microsoft.EventHub/namespaces"):                   {"namespace"},
+	strings.ToLower("Microsoft.ServiceBus/namespaces"):                 {"namespace"},
+	strings.ToLower("Microsoft.DataFactory/factories"):                 {"dataFactory", "portal"},
+	strings.ToLower("Microsoft.HDInsight/clusters"):                    {"gateway", "headnode"},
+	strings.ToLower("Microsoft.Kusto/Clusters"):                        {"cluster"},
 	strings.ToLower("Microsoft.PowerBI/privateLinkServicesForPowerBI"): {"tenant"},
-	strings.ToLower("Microsoft.Databricks/workspaces"):    {"databricks_ui_api", "browser_authentication"},
+	strings.ToLower("Microsoft.Databricks/workspaces"):                 {"databricks_ui_api", "browser_authentication"},
 	strings.ToLower("Microsoft.Fabric/privateLinkServicesForFabric"):   {"workspace"},
 
-	strings.ToLower("Microsoft.Batch/batchAccounts"): {"batchAccount", "nodeManagement"},
+	strings.ToLower("Microsoft.Batch/batchAccounts"):              {"batchAccount", "nodeManagement"},
 	strings.ToLower("Microsoft.DesktopVirtualization/workspaces"): {"global", "feed"},
 	strings.ToLower("Microsoft.DesktopVirtualization/hostpools"):  {"connection"},
 
@@ -39,12 +40,12 @@ var privateEndpointSubresourcesByResourceType = map[string][]string{
 	strings.ToLower("Microsoft.App/managedEnvironments"):          {"managedEnvironments"},
 	strings.ToLower("Microsoft.ContainerRegistry/registries"):     {"registry"},
 
-	strings.ToLower("Microsoft.Sql/servers"):          {"sqlServer"},
-	strings.ToLower("Microsoft.Sql/managedInstances"): {"managedInstance"},
-	strings.ToLower("Microsoft.DocumentDB/databaseAccounts"): {"Sql", "MongoDB", "Cassandra", "Gremlin", "Table", "Analytical"},
-	strings.ToLower("Microsoft.DBforPostgreSQL/serverGroupsv2"): {"coordinator"},
-	strings.ToLower("Microsoft.DocumentDB/mongoClusters"):       {"MongoCluster"},
-	strings.ToLower("Microsoft.DBforPostgreSQL/servers"):        {"postgresqlServer"},
+	strings.ToLower("Microsoft.Sql/servers"):                     {"sqlServer"},
+	strings.ToLower("Microsoft.Sql/managedInstances"):            {"managedInstance"},
+	strings.ToLower("Microsoft.DocumentDB/databaseAccounts"):     {"Sql", "MongoDB", "Cassandra", "Gremlin", "Table", "Analytical"},
+	strings.ToLower("Microsoft.DBforPostgreSQL/serverGroupsv2"):  {"coordinator"},
+	strings.ToLower("Microsoft.DocumentDB/mongoClusters"):        {"MongoCluster"},
+	strings.ToLower("Microsoft.DBforPostgreSQL/servers"):         {"postgresqlServer"},
 	strings.ToLower("Microsoft.DBforPostgreSQL/flexibleServers"): {"postgresqlServer"},
 	strings.ToLower("Microsoft.DBforMySQL/servers"):              {"mysqlServer"},
 	strings.ToLower("Microsoft.DBforMySQL/flexibleServers"):      {"mysqlServer"},
@@ -61,38 +62,38 @@ var privateEndpointSubresourcesByResourceType = map[string][]string{
 	strings.ToLower("Microsoft.ApiManagement/service"):       {"Gateway"},
 	strings.ToLower("Microsoft.HealthcareApis/workspaces"):   {"healthcareworkspace"},
 
-	strings.ToLower("Microsoft.Devices/IotHubs"):            {"iotHub"},
-	strings.ToLower("Microsoft.Devices/ProvisioningServices"): {"iotDps"},
-	strings.ToLower("Microsoft.DeviceUpdate/accounts"):      {"DeviceUpdate"},
-	strings.ToLower("Microsoft.IoTCentral/IoTApps"):         {"iotApp"},
+	strings.ToLower("Microsoft.Devices/IotHubs"):                    {"iotHub"},
+	strings.ToLower("Microsoft.Devices/ProvisioningServices"):       {"iotDps"},
+	strings.ToLower("Microsoft.DeviceUpdate/accounts"):              {"DeviceUpdate"},
+	strings.ToLower("Microsoft.IoTCentral/IoTApps"):                 {"iotApp"},
 	strings.ToLower("Microsoft.DigitalTwins/digitalTwinsInstances"): {"API"},
 
 	strings.ToLower("Microsoft.Media/mediaservices"): {"keydelivery", "liveevent", "streamingendpoint"},
 
-	strings.ToLower("Microsoft.Automation/automationAccounts"): {"Webhook", "DSCAndHybridWorker"},
-	strings.ToLower("Microsoft.RecoveryServices/vaults"):       {"AzureBackup", "AzureBackup_secondary", "AzureSiteRecovery"},
-	strings.ToLower("Microsoft.Insights/privateLinkScopes"):    {"azuremonitor"},
-	strings.ToLower("Microsoft.Purview/accounts"):              {"account", "portal", "platform"},
-	strings.ToLower("Microsoft.Migrate/migrateProjects"):       {"Default"},
-	strings.ToLower("Microsoft.Migrate/assessmentProjects"):    {"Default"},
+	strings.ToLower("Microsoft.Automation/automationAccounts"):                {"Webhook", "DSCAndHybridWorker"},
+	strings.ToLower("Microsoft.RecoveryServices/vaults"):                      {"AzureBackup", "AzureBackup_secondary", "AzureSiteRecovery"},
+	strings.ToLower("Microsoft.Insights/privateLinkScopes"):                   {"azuremonitor"},
+	strings.ToLower("Microsoft.Purview/accounts"):                             {"account", "portal", "platform"},
+	strings.ToLower("Microsoft.Migrate/migrateProjects"):                      {"Default"},
+	strings.ToLower("Microsoft.Migrate/assessmentProjects"):                   {"Default"},
 	strings.ToLower("Microsoft.Authorization/resourceManagementPrivateLinks"): {"ResourceManagement"},
-	strings.ToLower("Microsoft.Dashboard/grafana"):             {"grafana"},
-	strings.ToLower("Microsoft.Monitor/accounts"):              {"prometheusMetrics"},
+	strings.ToLower("Microsoft.Dashboard/grafana"):                            {"grafana"},
+	strings.ToLower("Microsoft.Monitor/accounts"):                             {"prometheusMetrics"},
 
-	strings.ToLower("Microsoft.KeyVault/vaults"):        {"vault"},
-	strings.ToLower("Microsoft.KeyVault/managedHSMs"):   {"managedhsm"},
+	strings.ToLower("Microsoft.KeyVault/vaults"):                      {"vault"},
+	strings.ToLower("Microsoft.KeyVault/managedHSMs"):                 {"managedhsm"},
 	strings.ToLower("Microsoft.AppConfiguration/configurationStores"): {"configurationStores"},
 	strings.ToLower("Microsoft.Attestation/attestationProviders"):     {"standard"},
 
-	strings.ToLower("Microsoft.Storage/storageAccounts"): {"blob", "blob_secondary", "table", "table_secondary", "queue", "queue_secondary", "file", "web", "web_secondary", "dfs", "dfs_secondary"},
+	strings.ToLower("Microsoft.Storage/storageAccounts"):         {"blob", "blob_secondary", "table", "table_secondary", "queue", "queue_secondary", "file", "web", "web_secondary", "dfs", "dfs_secondary"},
 	strings.ToLower("Microsoft.StorageSync/storageSyncServices"): {"afs"},
-	strings.ToLower("Microsoft.Compute/diskAccesses"):           {"disks"},
-	strings.ToLower("Microsoft.ElasticSan/elasticSans"):         {"volumegroup"},
-	strings.ToLower("Microsoft.FileShares/fileShares"):          {"FileShare"},
+	strings.ToLower("Microsoft.Compute/diskAccesses"):            {"disks"},
+	strings.ToLower("Microsoft.ElasticSan/elasticSans"):          {"volumegroup"},
+	strings.ToLower("Microsoft.FileShares/fileShares"):           {"FileShare"},
 
-	strings.ToLower("Microsoft.Search/searchServices"): {"searchService"},
-	strings.ToLower("Microsoft.Relay/namespaces"):      {"namespace"},
-	strings.ToLower("Microsoft.Web/sites"):             {"sites"},
+	strings.ToLower("Microsoft.Search/searchServices"):    {"searchService"},
+	strings.ToLower("Microsoft.Relay/namespaces"):         {"namespace"},
+	strings.ToLower("Microsoft.Web/sites"):                {"sites"},
 	strings.ToLower("Microsoft.SignalRService/SignalR"):   {"signalr"},
 	strings.ToLower("Microsoft.Web/staticSites"):          {"staticSites"},
 	strings.ToLower("Microsoft.SignalRService/WebPubSub"): {"webpubsub"},
@@ -108,7 +109,7 @@ func privateEndpointDefaultSubresource(resourceType string) (string, bool) {
 
 // generateInterfaces creates main.interfaces.tf with the AVM interfaces module wiring.
 // Only includes interface wiring for capabilities with swagger evidence.
-func generateInterfaces(resourceType string, caps openapi.InterfaceCapabilities, outputDir string) error {
+func generateInterfaces(caps openapi.InterfaceCapabilities, outputDir string) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 

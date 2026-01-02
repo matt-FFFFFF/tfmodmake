@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// TestGenAliasEquivalence tests that `tfmodmake gen` produces the same output as default generation
+// TestGenAliasEquivalence tests that `tfmodmake gen` produces the same output as `tfmodmake g`.
 func TestGenAliasEquivalence(t *testing.T) {
 	// Create a minimal test spec
 	testSpec := map[string]interface{}{
@@ -59,9 +59,9 @@ func TestGenAliasEquivalence(t *testing.T) {
 		},
 	}
 
-	// Test default generation
-	defaultDir := t.TempDir()
-	specPath1 := filepath.Join(defaultDir, "test_spec.json")
+	// Test 'gen' subcommand
+	genDir := t.TempDir()
+	specPath1 := filepath.Join(genDir, "test_spec.json")
 	specData, err := json.MarshalIndent(testSpec, "", "  ")
 	if err != nil {
 		t.Fatalf("Failed to marshal test spec: %v", err)
@@ -77,42 +77,15 @@ func TestGenAliasEquivalence(t *testing.T) {
 		t.Fatalf("Failed to build tfmodmake: %v\n%s", err, output)
 	}
 
-	// Run default generation
-	cmd := exec.Command(tfmodmakePath, "-spec", specPath1, "-resource", "Microsoft.Test/testResources")
-	cmd.Dir = defaultDir
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Failed to run default generation: %v\n%s", err, output)
-	}
-
-	// Verify files were created
-	defaultFiles := []string{"variables.tf", "locals.tf", "main.tf", "outputs.tf", "terraform.tf"}
-	for _, file := range defaultFiles {
-		path := filepath.Join(defaultDir, file)
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			t.Errorf("Expected file %s not created in default generation", file)
-		}
-	}
-
-	// Verify main.interfaces.tf was NOT created
-	interfacesPath := filepath.Join(defaultDir, "main.interfaces.tf")
-	if _, err := os.Stat(interfacesPath); !os.IsNotExist(err) {
-		t.Errorf("main.interfaces.tf should NOT be created by default generation")
-	}
-
-	// Test 'gen' subcommand
-	genDir := t.TempDir()
-	specPath2 := filepath.Join(genDir, "test_spec.json")
-	if err := os.WriteFile(specPath2, specData, 0o644); err != nil {
-		t.Fatalf("Failed to write test spec: %v", err)
-	}
-
-	cmd = exec.Command(tfmodmakePath, "gen", "-spec", specPath2, "-resource", "Microsoft.Test/testResources")
+	// Run 'gen' subcommand
+	cmd := exec.Command(tfmodmakePath, "gen", "-spec", specPath1, "-resource", "Microsoft.Test/testResources")
 	cmd.Dir = genDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to run gen subcommand: %v\n%s", err, output)
 	}
 
 	// Verify files were created
+	defaultFiles := []string{"variables.tf", "locals.tf", "main.tf", "outputs.tf", "terraform.tf"}
 	for _, file := range defaultFiles {
 		path := filepath.Join(genDir, file)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -121,25 +94,52 @@ func TestGenAliasEquivalence(t *testing.T) {
 	}
 
 	// Verify main.interfaces.tf was NOT created
-	interfacesPath = filepath.Join(genDir, "main.interfaces.tf")
+	interfacesPath := filepath.Join(genDir, "main.interfaces.tf")
 	if _, err := os.Stat(interfacesPath); !os.IsNotExist(err) {
 		t.Errorf("main.interfaces.tf should NOT be created by gen subcommand")
 	}
 
+	// Test 'g' alias
+	aliasDir := t.TempDir()
+	specPath2 := filepath.Join(aliasDir, "test_spec.json")
+	if err := os.WriteFile(specPath2, specData, 0o644); err != nil {
+		t.Fatalf("Failed to write test spec: %v", err)
+	}
+
+	cmd = exec.Command(tfmodmakePath, "g", "-spec", specPath2, "-resource", "Microsoft.Test/testResources")
+	cmd.Dir = aliasDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to run g alias: %v\n%s", err, output)
+	}
+
+	// Verify files were created
+	for _, file := range defaultFiles {
+		path := filepath.Join(aliasDir, file)
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			t.Errorf("Expected file %s not created in g alias", file)
+		}
+	}
+
+	// Verify main.interfaces.tf was NOT created
+	interfacesPath = filepath.Join(aliasDir, "main.interfaces.tf")
+	if _, err := os.Stat(interfacesPath); !os.IsNotExist(err) {
+		t.Errorf("main.interfaces.tf should NOT be created by g alias")
+	}
+
 	// Compare the core generated files (they should be identical)
 	for _, file := range defaultFiles {
-		defaultContent, err := os.ReadFile(filepath.Join(defaultDir, file))
-		if err != nil {
-			t.Fatalf("Failed to read %s from default dir: %v", file, err)
-		}
-
-		genContent, err := os.ReadFile(filepath.Join(genDir, file))
+		defaultContent, err := os.ReadFile(filepath.Join(genDir, file))
 		if err != nil {
 			t.Fatalf("Failed to read %s from gen dir: %v", file, err)
 		}
 
+		genContent, err := os.ReadFile(filepath.Join(aliasDir, file))
+		if err != nil {
+			t.Fatalf("Failed to read %s from g alias dir: %v", file, err)
+		}
+
 		if string(defaultContent) != string(genContent) {
-			t.Errorf("File %s differs between default and gen subcommand", file)
+			t.Errorf("File %s differs between gen subcommand and g alias", file)
 		}
 	}
 }
@@ -213,7 +213,7 @@ func TestAddAVMInterfaces(t *testing.T) {
 	}
 
 	// Generate base module
-	cmd := exec.Command(tfmodmakePath, "-spec", specPath, "-resource", "Microsoft.Test/testResources")
+	cmd := exec.Command(tfmodmakePath, "gen", "-spec", specPath, "-resource", "Microsoft.Test/testResources")
 	cmd.Dir = tmpDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to generate base module: %v\n%s", err, output)
@@ -332,7 +332,7 @@ func TestAddAVMInterfacesWithInference(t *testing.T) {
 	}
 
 	// Generate base module
-	cmd := exec.Command(tfmodmakePath, "-spec", specPath, "-resource", "Microsoft.Test/testResources")
+	cmd := exec.Command(tfmodmakePath, "gen", "-spec", specPath, "-resource", "Microsoft.Test/testResources")
 	cmd.Dir = tmpDir
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed to generate base module: %v\n%s", err, output)
