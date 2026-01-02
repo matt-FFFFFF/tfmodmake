@@ -8,25 +8,32 @@ import (
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 )
 
+type Generator struct {
+	opts *generatorOptions
+}
+
+type generatorOptions struct{}
+
 // Generate generates variables.tf, locals.tf, main.tf, and outputs.tf based on the schema.
 //
-// The optional nameSchema parameter is used to attach validations to the top-level "name" variable.
-// The spec parameter is used to detect which AVM interface capabilities are supported.
+// The spec parameter is used to detect which AVM interface capabilities are supported and to find the name schema.
 // The optional moduleNamePrefix is used to rename variables that conflict with Terraform module meta-arguments (e.g., "version" -> "dapr_component_version").
 // Files are written to the current directory.
-func Generate(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, nameSchema *openapi3.Schema, spec *openapi3.T) error {
-	return GenerateWithContext(schema, resourceType, localName, apiVersion, supportsTags, supportsLocation, nameSchema, spec, "", ".")
+func Generate(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, spec *openapi3.T) error {
+	return GenerateWithContext(schema, resourceType, localName, apiVersion, supportsTags, supportsLocation, spec, "", ".")
 }
 
 // GenerateWithContext is like Generate but accepts a moduleNamePrefix for renaming reserved variable names and an outputDir for where to write files.
-func GenerateWithContext(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, nameSchema *openapi3.Schema, spec *openapi3.T, moduleNamePrefix string, outputDir string) error {
+func GenerateWithContext(schema *openapi3.Schema, resourceType string, localName string, apiVersion string, supportsTags bool, supportsLocation bool, spec *openapi3.T, moduleNamePrefix string, outputDir string) error {
 	hasSchema := schema != nil
 	supportsIdentity := SupportsIdentity(schema)
 
 	// Detect interface capabilities from spec
 	var caps openapi.InterfaceCapabilities
+	var nameSchema *openapi3.Schema
 	if spec != nil {
 		caps = openapi.DetectInterfaceCapabilities(spec, resourceType)
+		nameSchema, _ = openapi.FindResourceNameSchema(spec, resourceType)
 	}
 
 	// Collect secret fields from schema

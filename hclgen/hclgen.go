@@ -3,6 +3,7 @@ package hclgen
 
 import (
 	"os"
+	"path/filepath"
 	"unicode"
 
 	"github.com/hashicorp/hcl/v2/hclsyntax"
@@ -147,12 +148,6 @@ func WriteFile(path string, file *hclwrite.File) error {
 
 // WriteFileToDir writes an HCL file to a specified directory.
 func WriteFileToDir(outputDir string, filename string, file *hclwrite.File) error {
-	if outputDir == "" {
-		outputDir = "."
-	}
-	path := filename
-	if outputDir != "." {
-		path = outputDir + "/" + filename
-	}
+	path := filepath.Join(outputDir, filename)
 	return os.WriteFile(path, file.Bytes(), 0o644)
 }

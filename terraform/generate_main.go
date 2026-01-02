@@ -37,8 +37,6 @@ func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName s
 	resourceBody.SetAttributeValue("type", cty.StringVal(resourceTypeWithAPIVersion))
 	resourceBody.SetAttributeRaw("name", hclgen.TokensForTraversal("var", "name"))
 	resourceBody.SetAttributeRaw("parent_id", hclgen.TokensForTraversal("var", "parent_id"))
-	resourceBody.SetAttributeValue("ignore_null_property", cty.BoolVal(true))
-	resourceBody.SetAttributeValue("schema_validation_enabled", cty.BoolVal(true))
 
 	if supportsLocation {
 		resourceBody.SetAttributeRaw("location", hclgen.TokensForTraversal("var", "location"))
@@ -86,15 +84,7 @@ func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName s
 
 	// Generate response_export_values from computed (non-writable) fields in the schema
 	exportPaths := extractComputedPaths(schema)
-	if len(exportPaths) > 0 {
-		resourceBody.SetAttributeRaw("response_export_values", hclgen.TokensForMultilineStringList(exportPaths))
-
-		// Add a reminder comment after the resource block.
-		// This placement makes it stand out to users who should customize the exports.
-		// Intentionally do not emit guidance comments in generated output.
-	} else {
-		resourceBody.SetAttributeValue("response_export_values", cty.ListValEmpty(cty.String))
-	}
+	resourceBody.SetAttributeRaw("response_export_values", hclgen.TokensForMultilineStringList(exportPaths))
 
 	return hclgen.WriteFileToDir(outputDir, "main.tf", file)
 }

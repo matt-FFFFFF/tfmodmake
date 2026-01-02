@@ -1,4 +1,4 @@
-package main
+package terraform
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
-	"github.com/matt-FFFFFF/tfmodmake/terraform"
 )
 
 // ResourceLoadResult contains all information needed to generate a Terraform module
@@ -21,9 +20,9 @@ type ResourceLoadResult struct {
 	SupportsLocation bool
 }
 
-// LoadResourceFromSpecs attempts to find and load a resource type from a list of specs.
+// LoadResource attempts to find and load a resource type from a list of specs.
 // It returns the first successful match or an error with details about failures.
-func LoadResourceFromSpecs(ctx context.Context, specs []string, resourceType string) (*ResourceLoadResult, error) {
+func LoadResource(ctx context.Context, specs []string, resourceType string) (*ResourceLoadResult, error) {
 	var loadErrors []string
 	var searchErrors []string
 
@@ -67,8 +66,8 @@ func LoadResourceFromSpecs(ctx context.Context, specs []string, resourceType str
 		}
 
 		// Check for tags and location support
-		result.SupportsTags = terraform.SupportsTags(result.Schema)
-		result.SupportsLocation = terraform.SupportsLocation(result.Schema)
+		result.SupportsTags = SupportsTags(result.Schema)
+		result.SupportsLocation = SupportsLocation(result.Schema)
 
 		return result, nil
 	}

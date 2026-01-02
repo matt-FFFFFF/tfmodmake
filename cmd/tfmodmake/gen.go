@@ -298,7 +298,7 @@ func generateChildModule(ctx context.Context, specs []string, childType, moduleP
 
 	// Load specs and find the child resource
 	// Load the child resource from specs
-	result, err := LoadResourceFromSpecs(ctx, specs, childType)
+	result, err := terraform.LoadResource(ctx, specs, childType)
 	if err != nil {
 		return fmt.Errorf("failed to load child resource: %w", err)
 	}
@@ -306,7 +306,6 @@ func generateChildModule(ctx context.Context, specs []string, childType, moduleP
 	schema := result.Schema
 	doc := result.Doc
 	apiVersion := result.APIVersion
-	nameSchema := result.NameSchema
 	supportsTags := result.SupportsTags
 	supportsLocation := result.SupportsLocation
 
@@ -320,7 +319,7 @@ func generateChildModule(ctx context.Context, specs []string, childType, moduleP
 
 	// Generate Terraform files in the module directory
 	localName := "resource_body"
-	if err := terraform.GenerateWithContext(schema, childType, localName, apiVersion, supportsTags, supportsLocation, nameSchema, doc, moduleName, modulePath); err != nil {
+	if err := terraform.GenerateWithContext(schema, childType, localName, apiVersion, supportsTags, supportsLocation, doc, moduleName, modulePath); err != nil {
 		return fmt.Errorf("failed to generate terraform files: %w", err)
 	}
 
@@ -416,7 +415,7 @@ func isInterfaceManagedChild(childResourceType string) bool {
 // generateBaseModule generates the base module files in the current directory
 func generateBaseModule(ctx context.Context, specSources []string, resourceType, localName string) error {
 	// Load the resource from specs
-	result, err := LoadResourceFromSpecs(ctx, specSources, resourceType)
+	result, err := terraform.LoadResource(ctx, specSources, resourceType)
 	if err != nil {
 		return fmt.Errorf("failed to load resource: %w", err)
 	}
@@ -424,7 +423,6 @@ func generateBaseModule(ctx context.Context, specSources []string, resourceType,
 	schema := result.Schema
 	doc := result.Doc
 	apiVersion := result.APIVersion
-	nameSchema := result.NameSchema
 	supportsTags := result.SupportsTags
 	supportsLocation := result.SupportsLocation
 
@@ -435,5 +433,5 @@ func generateBaseModule(ctx context.Context, specSources []string, resourceType,
 	}
 
 	// Generate Terraform files
-	return terraform.Generate(schema, resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, nameSchema, doc)
+	return terraform.Generate(schema, resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, doc)
 }
