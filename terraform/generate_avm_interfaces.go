@@ -109,7 +109,7 @@ func privateEndpointDefaultSubresource(resourceType string) (string, bool) {
 
 // generateInterfaces creates main.interfaces.tf with the AVM interfaces module wiring.
 // Only includes interface wiring for capabilities with swagger evidence.
-func generateInterfaces(resourceType string, caps openapi.InterfaceCapabilities, outputDir string) error {
+func generateInterfaces(caps openapi.InterfaceCapabilities, outputDir string) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 

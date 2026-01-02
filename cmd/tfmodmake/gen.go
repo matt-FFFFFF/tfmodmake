@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 	specpkg "github.com/matt-FFFFFF/tfmodmake/specs"
 	"github.com/matt-FFFFFF/tfmodmake/submodule"
@@ -31,13 +30,8 @@ func GenCommand() *cli.Command {
 				Usage: "Resource type to generate (e.g., Microsoft.ContainerService/managedClusters)",
 			},
 			&cli.StringFlag{
-				Name:  "root",
-				Usage: "Path to the root object (e.g., properties or properties.foo)",
-				Value: "properties",
-			},
-			&cli.StringFlag{
 				Name:  "local-name",
-				Usage: "Name of the local variable to generate (default: resource_body or derived from root)",
+				Usage: "Name of the local variable to generate (default: resource_body)",
 			},
 		},
 		Action: runGen,
@@ -115,10 +109,6 @@ func GenCommand() *cli.Command {
 						Required: true,
 					},
 					&cli.StringFlag{
-						Name:  "root",
-						Usage: "Path to the root object",
-					},
-					&cli.StringFlag{
 						Name:  "local-name",
 						Usage: "Name of the local variable to generate",
 					},
@@ -141,14 +131,13 @@ func GenCommand() *cli.Command {
 func runGen(ctx context.Context, cmd *cli.Command) error {
 	specs := cmd.StringSlice("spec")
 	resourceType := cmd.String("resource")
-	rootPath := cmd.String("root")
 	localName := cmd.String("local-name")
 
 	if len(specs) == 0 || resourceType == "" {
 		return cli.ShowSubcommandHelp(cmd)
 	}
 
-	return generateBaseModule(ctx, specs, resourceType, rootPath, localName)
+	return generateBaseModule(ctx, specs, resourceType, localName)
 }
 
 func runAddChild(ctx context.Context, cmd *cli.Command) error {
@@ -241,7 +230,6 @@ func runGenAVM(ctx context.Context, cmd *cli.Command) error {
 	includePreview := cmd.Bool("include-preview")
 	printResolvedSpecs := cmd.Bool("print-resolved-specs")
 	resourceType := cmd.String("resource")
-	rootPath := cmd.String("root")
 	localName := cmd.String("local-name")
 	moduleDir := cmd.String("module-dir")
 	dryRun := cmd.Bool("dry-run")
@@ -293,7 +281,7 @@ func runGenAVM(ctx context.Context, cmd *cli.Command) error {
 		return nil
 	}
 
-	if err := orchestrateAVMGeneration(ctx, specSources, resourceType, rootPath, localName, moduleDir); err != nil {
+	if err := orchestrateAVMGeneration(ctx, specSources, resourceType, localName, moduleDir); err != nil {
 		return fmt.Errorf("failed to generate AVM module: %w", err)
 	}
 
@@ -340,10 +328,10 @@ func generateChildModule(ctx context.Context, specs []string, childType, moduleP
 }
 
 // orchestrateAVMGeneration performs the full AVM generation workflow
-func orchestrateAVMGeneration(ctx context.Context, specSources []string, resourceType, rootPath, localName, moduleDir string) error {
+func orchestrateAVMGeneration(ctx context.Context, specSources []string, resourceType, localName, moduleDir string) error {
 	// Step 1: Generate base module
 	fmt.Println("Step 1/4: Generating base module...")
-	if err := generateBaseModule(ctx, specSources, resourceType, rootPath, localName); err != nil {
+	if err := generateBaseModule(ctx, specSources, resourceType, localName); err != nil {
 		return fmt.Errorf("failed to generate base module: %w", err)
 	}
 
@@ -426,7 +414,7 @@ func isInterfaceManagedChild(childResourceType string) bool {
 }
 
 // generateBaseModule generates the base module files in the current directory
-func generateBaseModule(ctx context.Context, specSources []string, resourceType, rootPath, localName string) error {
+func generateBaseModule(ctx context.Context, specSources []string, resourceType, localName string) error {
 	// Load the resource from specs
 	result, err := LoadResourceFromSpecs(ctx, specSources, resourceType)
 	if err != nil {
@@ -440,22 +428,10 @@ func generateBaseModule(ctx context.Context, specSources []string, resourceType,
 	supportsTags := result.SupportsTags
 	supportsLocation := result.SupportsLocation
 
-	// Navigate to root path if specified
-	if rootPath != "" {
-		navigatedSchema, err := openapi.NavigateSchema(schema, rootPath)
-		if err != nil {
-			return fmt.Errorf("failed to navigate to root path %s: %w", rootPath, err)
-		}
-		schema = navigatedSchema
-	}
-
 	// Determine local name
 	finalLocalName := "resource_body"
 	if localName != "" {
 		finalLocalName = localName
-	} else if rootPath != "" {
-		finalLocalName = strings.ReplaceAll(rootPath, ".", "_")
-		finalLocalName = naming.ToSnakeCase(finalLocalName)
 	}
 
 	// Generate Terraform files
