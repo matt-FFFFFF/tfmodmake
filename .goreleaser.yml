@@ -29,7 +29,7 @@ checksum:
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 archives:
-  - id: alzlibtool
+  - id: tfmodmake
     formats: [tar.gz]
     ids:
       - tfmodmake
