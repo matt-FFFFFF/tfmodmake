@@ -113,12 +113,11 @@ func SetDescriptionAttribute(body *hclwrite.Body, description string) {
 
 // TokensForMultilineStringList returns tokens for a list of strings formatted
 // across multiple lines, e.g.:
-// [
 //
-//	"a",
-//	"b",
-//
-// ]
+//	[
+//	  "a",
+//	  "b",
+//	]
 func TokensForMultilineStringList(values []string) hclwrite.Tokens {
 	if len(values) == 0 {
 		return hclwrite.TokensForValue(cty.ListValEmpty(cty.String))
@@ -130,6 +129,36 @@ func TokensForMultilineStringList(values []string) hclwrite.Tokens {
 	}
 
 	for i, v := range values {
+		tokens = append(tokens, hclwrite.TokensForValue(cty.StringVal(v))...)
+		if i < len(values)-1 {
+			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(",")})
+		}
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")})
+	}
+
+	tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenCBrack, Bytes: []byte("]")})
+	return tokens
+}
+
+// TokensForMultilineStringListWithValueComments returns tokens for a list of strings formatted
+// across multiple lines, but with comments, e.g.:
+//
+//	[
+//	  #"a",
+//	  #"b",
+//	]
+func TokensForMultilineStringListWithValueComments(values []string) hclwrite.Tokens {
+	if len(values) == 0 {
+		return hclwrite.TokensForValue(cty.ListValEmpty(cty.String))
+	}
+
+	tokens := hclwrite.Tokens{
+		{Type: hclsyntax.TokenOBrack, Bytes: []byte("[")},
+		{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
+	}
+
+	for i, v := range values {
+		tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComment, Bytes: []byte("#")})
 		tokens = append(tokens, hclwrite.TokensForValue(cty.StringVal(v))...)
 		if i < len(values)-1 {
 			tokens = append(tokens, &hclwrite.Token{Type: hclsyntax.TokenComma, Bytes: []byte(",")})
