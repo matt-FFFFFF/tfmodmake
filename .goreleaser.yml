@@ -14,7 +14,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - '-s -w -X "github.com/matt-FFFFFF/alzlib/cmd/tfmodmake.version={{.Version}}"'
+      - '-s -w -X "github.com/matt-FFFFFF/tfmodmake/cmd/tfmodmake.version={{.Version}}"'
     goos:
       - windows
       - linux
