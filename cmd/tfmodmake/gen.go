@@ -314,7 +314,7 @@ func generateChildModule(ctx context.Context, specs []string, childType, moduleP
 	// Generate Terraform files in the module directory
 	localName := "resource_body"
 	if err := terraform.Generate(childType,
-		terraform.WithLoadResult(result),
+		result,
 		terraform.WithLocalName(localName),
 		terraform.WithModuleNamePrefix(moduleName),
 		terraform.WithOutputDir(modulePath),
@@ -427,7 +427,7 @@ func generateBaseModule(ctx context.Context, specSources []string, resourceType,
 
 	// Generate Terraform files
 	return terraform.Generate(resourceType,
-		terraform.WithLoadResult(result),
+		result,
 		terraform.WithLocalName(finalLocalName),
 	)
 }
