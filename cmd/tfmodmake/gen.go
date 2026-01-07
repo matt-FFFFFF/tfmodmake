@@ -303,12 +303,6 @@ func generateChildModule(ctx context.Context, specs []string, childType, moduleP
 		return fmt.Errorf("failed to load child resource: %w", err)
 	}
 
-	schema := result.Schema
-	doc := result.Doc
-	apiVersion := result.APIVersion
-	supportsTags := result.SupportsTags
-	supportsLocation := result.SupportsLocation
-
 	// Derive module name for variable renaming context
 	moduleName := deriveModuleName(childType)
 
@@ -319,7 +313,12 @@ func generateChildModule(ctx context.Context, specs []string, childType, moduleP
 
 	// Generate Terraform files in the module directory
 	localName := "resource_body"
-	if err := terraform.GenerateWithContext(schema, childType, localName, apiVersion, supportsTags, supportsLocation, doc, moduleName, modulePath); err != nil {
+	if err := terraform.Generate(childType,
+		result,
+		terraform.WithLocalName(localName),
+		terraform.WithModuleNamePrefix(moduleName),
+		terraform.WithOutputDir(modulePath),
+	); err != nil {
 		return fmt.Errorf("failed to generate terraform files: %w", err)
 	}
 
@@ -420,12 +419,6 @@ func generateBaseModule(ctx context.Context, specSources []string, resourceType,
 		return fmt.Errorf("failed to load resource: %w", err)
 	}
 
-	schema := result.Schema
-	doc := result.Doc
-	apiVersion := result.APIVersion
-	supportsTags := result.SupportsTags
-	supportsLocation := result.SupportsLocation
-
 	// Determine local name
 	finalLocalName := "resource_body"
 	if localName != "" {
@@ -433,5 +426,8 @@ func generateBaseModule(ctx context.Context, specSources []string, resourceType,
 	}
 
 	// Generate Terraform files
-	return terraform.Generate(schema, resourceType, finalLocalName, apiVersion, supportsTags, supportsLocation, doc)
+	return terraform.Generate(resourceType,
+		result,
+		terraform.WithLocalName(finalLocalName),
+	)
 }

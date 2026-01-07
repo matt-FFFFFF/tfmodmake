@@ -181,8 +181,8 @@ func discoverChildrenInSpec(doc *openapi3.T, parentType string, depth int, apiVe
 		}
 
 		// Check operations
-		hasPut := pathItem.Put != nil
-		hasPatch := pathItem.Patch != nil
+		hasPut := pathItem.Put != nil     //nolint:nilness // pathItem.Put is a pointer field and can be nil
+		hasPatch := pathItem.Patch != nil //nolint:nilness // pathItem.Patch is a pointer field and can be nil
 		hasGet := pathItem.Get != nil
 		hasDelete := pathItem.Delete != nil
 
