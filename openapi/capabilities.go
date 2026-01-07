@@ -144,7 +144,7 @@ func hasEncryptionProperty(schema *openapi3.Schema) bool {
 		}
 
 		propNameLower := strings.ToLower(propName)
-		
+
 		// Check for encryption-related property names
 		if propNameLower == "encryption" ||
 			propNameLower == "customermanagedkey" ||

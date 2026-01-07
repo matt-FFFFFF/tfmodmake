@@ -37,8 +37,6 @@ func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName s
 	resourceBody.SetAttributeValue("type", cty.StringVal(resourceTypeWithAPIVersion))
 	resourceBody.SetAttributeRaw("name", hclgen.TokensForTraversal("var", "name"))
 	resourceBody.SetAttributeRaw("parent_id", hclgen.TokensForTraversal("var", "parent_id"))
-	resourceBody.SetAttributeValue("ignore_null_property", cty.BoolVal(true))
-	resourceBody.SetAttributeValue("schema_validation_enabled", cty.BoolVal(true))
 
 	if supportsLocation {
 		resourceBody.SetAttributeRaw("location", hclgen.TokensForTraversal("var", "location"))
@@ -46,35 +44,23 @@ func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName s
 
 	resourceBody.SetAttributeValue("body", cty.EmptyObjectVal)
 	if hasSchema {
-		// If the schema already has a top-level "properties" field, we are generating the full resource body.
-		// Otherwise, we assume the schema itself represents the properties object (e.g. -root properties).
-		_, hasTopLevelProperties := schema.Properties["properties"]
-		if hasTopLevelProperties {
-			resourceBody.SetAttributeRaw("body", hclgen.TokensForTraversal("local", localName))
-		} else {
-			resourceBody.SetAttributeRaw("body", hclwrite.TokensForObject(
-				[]hclwrite.ObjectAttrTokens{
-					{
-						Name:  hclwrite.TokensForIdentifier("properties"),
-						Value: hclgen.TokensForTraversal("local", localName),
-					},
-				},
-			))
-		}
+		resourceBody.SetAttributeRaw("body", hclgen.TokensForTraversal("local", localName))
 	}
 
 	// Add sensitive_body if there are secrets
 	if len(secrets) > 0 {
-		resourceBody.SetAttributeRaw("sensitive_body", tokensForSensitiveBody(secrets, func(secret secretField) hclwrite.Tokens {
+		sensitiveBodyTokens := tokensForSensitiveBody(secrets, func(secret secretField) hclwrite.Tokens {
 			return hclgen.TokensForTraversal("var", secret.varName)
-		}))
+		})
+		resourceBody.SetAttributeRaw("sensitive_body", sensitiveBodyTokens)
 
 		// Add sensitive_body_version map
 		var versionAttrs []hclwrite.ObjectAttrTokens
 		for _, secret := range secrets {
 			versionVarName := secret.varName + "_version"
+			key := secret.path
 			versionAttrs = append(versionAttrs, hclwrite.ObjectAttrTokens{
-				Name:  hclwrite.TokensForValue(cty.StringVal(secret.path)),
+				Name:  hclwrite.TokensForValue(cty.StringVal(key)),
 				Value: hclgen.TokensForTraversal("var", versionVarName),
 			})
 		}
@@ -98,15 +84,7 @@ func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName s
 
 	// Generate response_export_values from computed (non-writable) fields in the schema
 	exportPaths := extractComputedPaths(schema)
-	if len(exportPaths) > 0 {
-		resourceBody.SetAttributeRaw("response_export_values", hclgen.TokensForMultilineStringList(exportPaths))
-
-		// Add a reminder comment after the resource block.
-		// This placement makes it stand out to users who should customize the exports.
-		// Intentionally do not emit guidance comments in generated output.
-	} else {
-		resourceBody.SetAttributeValue("response_export_values", cty.ListValEmpty(cty.String))
-	}
+	resourceBody.SetAttributeRaw("response_export_values", hclgen.TokensForMultilineStringList(exportPaths))
 
 	return hclgen.WriteFileToDir(outputDir, "main.tf", file)
 }

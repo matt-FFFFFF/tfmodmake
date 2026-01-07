@@ -37,7 +37,7 @@ func TestGenerateValidations_StringMinLength(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -81,7 +81,7 @@ func TestGenerateValidations_StringMaxLength(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -124,7 +124,7 @@ func TestGenerateValidations_StringUUIDFormat(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -168,7 +168,7 @@ func TestGenerateValidations_StringPattern(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -217,7 +217,7 @@ func TestGenerateValidations_ArrayMinItems(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -264,7 +264,7 @@ func TestGenerateValidations_ArrayMaxItems(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -310,7 +310,7 @@ func TestGenerateValidations_ArrayUniqueItems(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -354,7 +354,7 @@ func TestGenerateValidations_NumberMinimum(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -398,7 +398,7 @@ func TestGenerateValidations_NumberMaximum(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -443,7 +443,7 @@ func TestGenerateValidations_NumberExclusiveMinimum(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -488,7 +488,7 @@ func TestGenerateValidations_NumberExclusiveMaximum(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -532,7 +532,7 @@ func TestGenerateValidations_NumberMultipleOf(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -585,7 +585,7 @@ func TestGenerateValidations_EnumViaAllOf(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -640,7 +640,7 @@ func TestGenerateValidations_XMsEnum(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -685,7 +685,7 @@ func TestGenerateValidations_MultipleConstraints(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -724,7 +724,7 @@ func TestGenerateValidations_RequiredField(t *testing.T) {
 		},
 	}
 
-	err = Generate(schema, "testResource", "resource_body", "2024-01-01", false, false, nil, nil)
+	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")

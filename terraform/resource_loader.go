@@ -1,4 +1,4 @@
-package main
+package terraform
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
-	"github.com/matt-FFFFFF/tfmodmake/terraform"
 )
 
 // ResourceLoadResult contains all information needed to generate a Terraform module
@@ -21,11 +20,17 @@ type ResourceLoadResult struct {
 	SupportsLocation bool
 }
 
-// LoadResourceFromSpecs attempts to find and load a resource type from a list of specs.
+// LoadResource attempts to find and load a resource type from a list of specs.
 // It returns the first successful match or an error with details about failures.
-func LoadResourceFromSpecs(ctx context.Context, specs []string, resourceType string) (*ResourceLoadResult, error) {
+func LoadResource(ctx context.Context, specs []string, resourceType string) (GeneratorOption, error) {
 	var loadErrors []string
 	var searchErrors []string
+
+	var schema *openapi3.Schema
+	var spec *openapi3.T
+	var apiVersion string
+	var supportsTags bool
+	var supportsLocation bool
 
 	for _, specPath := range specs {
 		// Check context cancellation
@@ -47,30 +52,31 @@ func LoadResourceFromSpecs(ctx context.Context, specs []string, resourceType str
 		}
 
 		// Found the resource! Build result
-		result := &ResourceLoadResult{
-			Schema: foundSchema,
-			Doc:    loadedDoc,
-		}
+		schema = foundSchema
+		spec = loadedDoc
 
 		// Get API version
 		if loadedDoc.Info != nil {
-			result.APIVersion = loadedDoc.Info.Version
+			apiVersion = loadedDoc.Info.Version
 		}
 
-		// Get name schema
-		result.NameSchema, _ = openapi.FindResourceNameSchema(loadedDoc, resourceType)
-
 		// Apply writability overrides
-		openapi.AnnotateSchemaRefOrigins(result.Schema)
+		openapi.AnnotateSchemaRefOrigins(schema)
 		if resolver, err := openapi.NewPropertyWritabilityResolver(specPath); err == nil && resolver != nil {
-			openapi.ApplyPropertyWritabilityOverrides(result.Schema, resolver)
+			openapi.ApplyPropertyWritabilityOverrides(schema, resolver)
 		}
 
 		// Check for tags and location support
-		result.SupportsTags = terraform.SupportsTags(result.Schema)
-		result.SupportsLocation = terraform.SupportsLocation(result.Schema)
+		supportsTags = SupportsTags(schema)
+		supportsLocation = SupportsLocation(schema)
 
-		return result, nil
+		return func(o *generatorOptions) {
+			o.schema = schema
+			o.spec = spec
+			o.apiVersion = apiVersion
+			o.supportsTags = supportsTags
+			o.supportsLocation = supportsLocation
+		}, nil
 	}
 
 	// Resource not found in any spec

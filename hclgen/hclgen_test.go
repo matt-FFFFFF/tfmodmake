@@ -105,6 +105,23 @@ func TestTokensForMultilineStringList(t *testing.T) {
 	})
 }
 
+func TestTokensForMultilineStringListWithValueComments(t *testing.T) {
+	t.Run("empty list", func(t *testing.T) {
+		tokens := TokensForMultilineStringListWithValueComments(nil)
+		assert.Equal(t, "[]", string(tokens.Bytes()))
+	})
+
+	t.Run("single element", func(t *testing.T) {
+		tokens := TokensForMultilineStringListWithValueComments([]string{"a"})
+		assert.Equal(t, "[\n#\"a\"\n]", string(tokens.Bytes()))
+	})
+
+	t.Run("multiple elements", func(t *testing.T) {
+		tokens := TokensForMultilineStringListWithValueComments([]string{"a", "b"})
+		assert.Equal(t, "[\n#\"a\",\n#\"b\"\n]", string(tokens.Bytes()))
+	})
+}
+
 func TestTernary(t *testing.T) {
 	condition := hclwrite.TokensForIdentifier("var.enabled")
 	trueExpr := hclwrite.TokensForIdentifier("var.value")
