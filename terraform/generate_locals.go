@@ -74,7 +74,7 @@ func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath h
 		if prop == nil || prop.Value == nil {
 			continue
 		}
-		if !isWritableProperty(prop.Value) {
+		if !isWritablePropertyInContext(k, prop.Value, effectiveProps) {
 			continue
 		}
 
@@ -108,14 +108,29 @@ func constructFlattenedRootPropertiesValue(schema *openapi3.Schema, accessPath h
 }
 
 func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot bool, secretPaths map[string]struct{}, pathPrefix string, omitRootIdentity bool, moduleNamePrefix string) (hclwrite.Tokens, error) {
-	if schema.Type == nil {
+	if schema == nil {
 		return accessPath, nil
 	}
 
-	types := *schema.Type
+	// Helper to check for specific type match when Type is present.
+	hasType := func(t string) bool {
+		if schema.Type == nil {
+			return false
+		}
+		return slices.Contains(*schema.Type, t)
+	}
 
-	if slices.Contains(types, "object") {
-		if len(schema.Properties) == 0 {
+	// Get effective properties for allOf handling.
+	effectiveProps, err := openapi.GetEffectiveProperties(schema)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get effective properties in constructValue: %w", err)
+	}
+
+	// Treat schemas with properties (even without explicit type) as objects.
+	isObject := hasType("object") || (schema.Type == nil && len(effectiveProps) > 0)
+
+	if isObject {
+		if len(effectiveProps) == 0 {
 			if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
 				mappedValue, err := constructValue(schema.AdditionalProperties.Schema.Value, hclwrite.TokensForIdentifier("value"), false, secretPaths, pathPrefix, false, moduleNamePrefix)
 				if err != nil {
@@ -144,12 +159,6 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 			return accessPath, nil // map(string) or free-form, passed as is
 		}
 
-		// Get effective properties for allOf handling
-		effectiveProps, err := openapi.GetEffectiveProperties(schema)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get effective properties in constructValue: %w", err)
-		}
-
 		var attrs []hclwrite.ObjectAttrTokens
 		var keys []string
 		for k := range effectiveProps {
@@ -175,7 +184,7 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 				continue
 			}
 
-			if !isWritableProperty(prop.Value) {
+			if !isWritablePropertyInContext(k, prop.Value, effectiveProps) {
 				continue
 			}
 
@@ -190,16 +199,22 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 			}
 
 			// Flatten the top-level "properties" bag into separate variables.
-			if isRoot && k == "properties" && prop.Value.Type != nil && slices.Contains(*prop.Value.Type, "object") && len(prop.Value.Properties) > 0 {
-				childValue, err := constructFlattenedRootPropertiesValue(prop.Value, accessPath, secretPaths, moduleNamePrefix)
+			if isRoot && k == "properties" {
+				propEffectiveProps, err := openapi.GetEffectiveProperties(prop.Value)
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("failed to get effective properties for root properties: %w", err)
 				}
-				attrs = append(attrs, hclwrite.ObjectAttrTokens{
-					Name:  tokensForObjectKey(k),
-					Value: childValue,
-				})
-				continue
+				if (prop.Value.Type == nil || slices.Contains(*prop.Value.Type, "object")) && len(propEffectiveProps) > 0 {
+					childValue, err := constructFlattenedRootPropertiesValue(prop.Value, accessPath, secretPaths, moduleNamePrefix)
+					if err != nil {
+						return nil, err
+					}
+					attrs = append(attrs, hclwrite.ObjectAttrTokens{
+						Name:  tokensForObjectKey(k),
+						Value: childValue,
+					})
+					continue
+				}
 			}
 
 			snakeName := naming.ToSnakeCase(k)
@@ -225,7 +240,7 @@ func constructValue(schema *openapi3.Schema, accessPath hclwrite.Tokens, isRoot 
 		return objTokens, nil
 	}
 
-	if slices.Contains(types, "array") {
+	if hasType("array") {
 		if schema.Items != nil && schema.Items.Value != nil {
 			childValue, err := constructValue(schema.Items.Value, hclwrite.TokensForIdentifier("item"), false, secretPaths, pathPrefix+"[]", false, moduleNamePrefix)
 			if err != nil {

@@ -37,11 +37,11 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 		if err != nil {
 			return false, fmt.Errorf("getting effective properties for array item schema: %w", err)
 		}
-		for _, prop := range props {
+		for propName, prop := range props {
 			if prop == nil || prop.Value == nil {
 				continue
 			}
-			if !isWritableProperty(prop.Value) {
+			if !isWritablePropertyInContext(propName, prop.Value, props) {
 				continue
 			}
 			if isSecretField(prop.Value) {
@@ -275,7 +275,8 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 
 		// Flatten the standard ARM top-level "properties" bag into individual Terraform variables.
 		// This is the default module shape for full-schema generation (no -root), per DESIGN.md.
-		if name == "properties" && propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") {
+		// Check for properties bag by looking at effective children, not just explicit type.
+		if name == "properties" {
 			propsSchema := propSchema
 
 			childProps, err := openapi.GetEffectiveProperties(propsSchema)
@@ -302,7 +303,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 					continue
 				}
 				childSchema := childRef.Value
-				if !isWritableProperty(childSchema) {
+				if !isWritablePropertyInContext(childName, childSchema, childProps) {
 					continue
 				}
 
@@ -335,7 +336,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 			continue
 		}
 
-		if !isWritableProperty(propSchema) {
+		if !isWritablePropertyInContext(name, propSchema, effectiveProps) {
 			continue
 		}
 
@@ -531,7 +532,7 @@ func mapType(schema *openapi3.Schema) (hclwrite.Tokens, error) {
 			if prop == nil || prop.Value == nil {
 				continue
 			}
-			if !isWritableProperty(prop.Value) {
+			if !isWritablePropertyInContext(k, prop.Value, effectiveProps) {
 				continue
 			}
 			fieldType, err := mapType(prop.Value)
@@ -588,7 +589,7 @@ func buildNestedDescription(schema *openapi3.Schema, indent string) (string, err
 		}
 		val := childProp.Value
 
-		if !isWritableProperty(val) {
+		if !isWritablePropertyInContext(k, val, effectiveProps) {
 			continue
 		}
 
