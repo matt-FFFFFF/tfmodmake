@@ -60,6 +60,25 @@ func isWritableProperty(schema *openapi3.Schema) bool {
 	return true
 }
 
+// isWritablePropertyInContext checks writability considering parent context.
+// For "id" fields, if the parent object has a "name" sibling, the id is treated
+// as computed (Azure inline definitions compute id from parent resource + name).
+func isWritablePropertyInContext(propName string, propSchema *openapi3.Schema, siblingProps map[string]*openapi3.SchemaRef) bool {
+	if !isWritableProperty(propSchema) {
+		return false
+	}
+
+	// Heuristic for badly-behaved Azure specs that don't mark inline definition ids as readOnly:
+	// If this is an "id" field and the parent has a "name" sibling, it's a computed id.
+	if propName == "id" && siblingProps != nil {
+		if _, hasName := siblingProps["name"]; hasName {
+			return false
+		}
+	}
+
+	return true
+}
+
 func hasWritableProperty(schema *openapi3.Schema, path string) bool {
 	if schema == nil || path == "" {
 		return false

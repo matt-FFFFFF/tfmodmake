@@ -97,4 +97,14 @@ WORKDIRS+=("$workdir")
 (cd "$workdir" && terraform validate -no-color >/dev/null)
 echo "ok"
 
+echo "== applicationGateways (gen avm) =="
+workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
+WORKDIRS+=("$workdir")
+(cd "$workdir" && "$TFMODMAKE_BIN" gen avm \
+  -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/network/resource-manager/Microsoft.Network/stable/2025-03-01/applicationGateway.json" \
+  -resource Microsoft.Network/applicationGateways >/dev/null)
+(cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
+(cd "$workdir" && terraform validate -no-color >/dev/null)
+echo "ok"
+
 run_keyvault_case
