@@ -28,6 +28,12 @@ type ResolveRequest struct {
 
 	IncludePreview bool
 
+	// PinVersion, when set, restricts spec resolution to only the version folder
+	// matching this exact API version string (e.g. "2024-02-02-preview").
+	// This is used by the update command to locate the spec for the current
+	// API version embedded in a module's main.tf.
+	PinVersion string
+
 	GitHubToken string
 }
 
@@ -60,16 +66,28 @@ func (r DefaultSpecResolver) Resolve(ctx context.Context, req ResolveRequest) (R
 			return ResolveResult{}, fmt.Errorf("invalid -spec-root: %w", err)
 		}
 
-		// Deterministic by default: treat -spec-root as a service root and select the latest stable
-		// version folder (optionally also include the latest preview folder).
-		urls, err := discoverDeterministicSpecSetFromGitHubDir(nil, loc, req.IncludeGlobs, req.GitHubToken, deterministicDiscoveryOptions{
-			IncludePreview: req.IncludePreview,
-		})
-		if err != nil {
-			return ResolveResult{}, fmt.Errorf("failed to discover specs from -spec-root: %w", err)
-		}
-		for _, url := range urls {
-			out.Specs = append(out.Specs, ResolvedSpec{Source: url, Origin: "spec-root"})
+		if req.PinVersion != "" {
+			// Version-pinned lookup: go directly to the version folder
+			// under stable/ or preview/ that matches the pinned version.
+			urls, err := discoverPinnedVersionSpecsFromGitHubDir(nil, loc, req.IncludeGlobs, req.GitHubToken, req.PinVersion)
+			if err != nil {
+				return ResolveResult{}, fmt.Errorf("failed to discover specs for pinned version %s: %w", req.PinVersion, err)
+			}
+			for _, url := range urls {
+				out.Specs = append(out.Specs, ResolvedSpec{Source: url, Origin: "spec-root-pinned"})
+			}
+		} else {
+			// Deterministic by default: treat -spec-root as a service root and select the latest stable
+			// version folder (optionally also include the latest preview folder).
+			urls, err := discoverDeterministicSpecSetFromGitHubDir(nil, loc, req.IncludeGlobs, req.GitHubToken, deterministicDiscoveryOptions{
+				IncludePreview: req.IncludePreview,
+			})
+			if err != nil {
+				return ResolveResult{}, fmt.Errorf("failed to discover specs from -spec-root: %w", err)
+			}
+			for _, url := range urls {
+				out.Specs = append(out.Specs, ResolvedSpec{Source: url, Origin: "spec-root"})
+			}
 		}
 	}
 

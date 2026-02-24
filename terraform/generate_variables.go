@@ -15,7 +15,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, supportsIdentity bool, secrets []secretField, nameSchema *openapi3.Schema, caps openapi.InterfaceCapabilities, moduleNamePrefix string, outputDir string) error {
+func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, supportsIdentity bool, secrets []secretField, nameSchema *openapi3.Schema, caps openapi.InterfaceCapabilities, moduleNamePrefix string) (*hclwrite.File, error) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -240,11 +240,11 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 		var err error
 		effectiveProps, err = openapi.GetEffectiveProperties(schema)
 		if err != nil {
-			return fmt.Errorf("getting effective properties: %w", err)
+			return nil, fmt.Errorf("getting effective properties: %w", err)
 		}
 		effectiveRequired, err = openapi.GetEffectiveRequired(schema)
 		if err != nil {
-			return fmt.Errorf("getting effective required: %w", err)
+			return nil, fmt.Errorf("getting effective required: %w", err)
 		}
 
 		for k := range effectiveProps {
@@ -280,11 +280,11 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 
 			childProps, err := openapi.GetEffectiveProperties(propsSchema)
 			if err != nil {
-				return fmt.Errorf("getting effective properties for root properties bag: %w", err)
+				return nil, fmt.Errorf("getting effective properties for root properties bag: %w", err)
 			}
 			childRequired, err := openapi.GetEffectiveRequired(propsSchema)
 			if err != nil {
-				return fmt.Errorf("getting effective required for root properties bag: %w", err)
+				return nil, fmt.Errorf("getting effective required for root properties bag: %w", err)
 			}
 			if len(childProps) == 0 {
 				continue
@@ -308,7 +308,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 
 				tfName := naming.ToSnakeCase(childName)
 				if tfName == "" {
-					return fmt.Errorf("could not derive terraform variable name for %s", childName)
+					return nil, fmt.Errorf("could not derive terraform variable name for %s", childName)
 				}
 				// Rename variables that conflict with Terraform module meta-arguments
 				if moduleNamePrefix != "" && tfName == "version" {
@@ -318,15 +318,15 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 				// A collision under flattened root properties is a hard error: users would have no way
 				// to configure that field.
 				if _, reserved := reservedNames[tfName]; reserved {
-					return fmt.Errorf("terraform variable name collision: %q (from properties.%s)", tfName, childName)
+					return nil, fmt.Errorf("terraform variable name collision: %q (from properties.%s)", tfName, childName)
 				}
 				if _, exists := seenNames[tfName]; exists {
-					return fmt.Errorf("terraform variable name collision: %q (from properties.%s)", tfName, childName)
+					return nil, fmt.Errorf("terraform variable name collision: %q (from properties.%s)", tfName, childName)
 				}
 				seenNames[tfName] = struct{}{}
 
 				if _, err := appendSchemaVariable(tfName, childName, childSchema, childRequired); err != nil {
-					return err
+					return nil, err
 				}
 
 				body.AppendNewline()
@@ -341,7 +341,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 
 		tfName := naming.ToSnakeCase(name)
 		if tfName == "" {
-			return fmt.Errorf("could not derive terraform variable name for %s", name)
+			return nil, fmt.Errorf("could not derive terraform variable name for %s", name)
 		}
 		if _, reserved := reservedNames[tfName]; reserved {
 			continue
@@ -351,11 +351,11 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 			tfName = moduleNamePrefix + "_version"
 		}
 		if _, exists := seenNames[tfName]; exists {
-			return fmt.Errorf("terraform variable name collision: %q (from %s)", tfName, name)
+			return nil, fmt.Errorf("terraform variable name collision: %q (from %s)", tfName, name)
 		}
 		seenNames[tfName] = struct{}{}
 		if _, err := appendSchemaVariable(tfName, name, propSchema, effectiveRequired); err != nil {
-			return err
+			return nil, err
 		}
 
 		if i < len(keys)-1 {
@@ -378,7 +378,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 
 		tfType, err := mapType(secret.schema)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		secretVarBody := appendVariable(
 			secret.varName,
@@ -400,7 +400,7 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 		}
 		versionVarName := secret.varName + "_version"
 		if _, exists := seenNames[versionVarName]; exists {
-			return fmt.Errorf("terraform variable name collision: %q (from secret version var)", versionVarName)
+			return nil, fmt.Errorf("terraform variable name collision: %q (from secret version var)", versionVarName)
 		}
 		versionBody := appendVariable(
 			versionVarName,
@@ -466,6 +466,14 @@ func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, 
 	// private_endpoints (only if swagger indicates Private Link/Private Endpoint support)
 	emitPrivateEndpointsVars(body, caps, appendVariable)
 
+	return file, nil
+}
+
+func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, supportsIdentity bool, secrets []secretField, nameSchema *openapi3.Schema, caps openapi.InterfaceCapabilities, moduleNamePrefix string, outputDir string) error {
+	file, err := buildVariables(schema, supportsTags, supportsLocation, supportsIdentity, secrets, nameSchema, caps, moduleNamePrefix)
+	if err != nil {
+		return err
+	}
 	return hclgen.WriteFileToDir(outputDir, "variables.tf", file)
 }
 

@@ -19,8 +19,8 @@ func main() {
 			GenCommand(),
 			AddCommand(),
 			DiscoverCommand(),
+			UpdateCommand(),
 		},
-		DefaultCommand: "gen",
 	}
 
 	if err := cmd.Run(context.Background(), os.Args); err != nil {

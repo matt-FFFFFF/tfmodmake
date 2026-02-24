@@ -6,7 +6,7 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateTerraform(outputDir string) error {
+func buildTerraform() *hclwrite.File {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -20,5 +20,9 @@ func generateTerraform(outputDir string) error {
 		"version": cty.StringVal("~> 2.7"),
 	}))
 
-	return hclgen.WriteFileToDir(outputDir, "terraform.tf", file)
+	return file
+}
+
+func generateTerraform(outputDir string) error {
+	return hclgen.WriteFileToDir(outputDir, "terraform.tf", buildTerraform())
 }

@@ -506,3 +506,49 @@ func parseAPIVersionDatePrefix(versionName string) (time.Time, bool) {
 	}
 	return t, true
 }
+
+// discoverPinnedVersionSpecsFromGitHubDir locates spec files for a specific API version
+// within a service root directory. It checks both stable/<version> and preview/<version>
+// subdirectories.
+func discoverPinnedVersionSpecsFromGitHubDir(client *http.Client, loc githubLocation, includeGlobs []string, githubToken string, pinVersion string) ([]string, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	if len(includeGlobs) == 0 {
+		includeGlobs = []string{"*.json"}
+	}
+
+	// If the directory already points to a version folder containing files, use it.
+	if urls, ok := tryListMatchingFilesInDir(client, loc, includeGlobs, githubToken); ok {
+		return urls, nil
+	}
+
+	// Try stable/<version> and preview/<version> under the service root.
+	candidates := []string{
+		strings.TrimSuffix(loc.Dir, "/") + "/stable/" + pinVersion,
+		strings.TrimSuffix(loc.Dir, "/") + "/preview/" + pinVersion,
+	}
+
+	// Also try inferring from a sibling stability root structure.
+	if stableRoot, previewRoot, ok := inferSiblingStabilityRoots(loc.Dir); ok {
+		candidates = append([]string{
+			stableRoot + "/" + pinVersion,
+			previewRoot + "/" + pinVersion,
+		}, candidates...)
+	}
+
+	seen := make(map[string]struct{})
+	for _, candidate := range candidates {
+		if _, exists := seen[candidate]; exists {
+			continue
+		}
+		seen[candidate] = struct{}{}
+
+		candidateLoc := githubLocation{Owner: loc.Owner, Repo: loc.Repo, Ref: loc.Ref, Dir: candidate}
+		if urls, ok := tryListMatchingFilesInDir(client, candidateLoc, includeGlobs, githubToken); ok {
+			return urls, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no spec files found for version %s under %s", pinVersion, loc.Dir)
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 )
 
@@ -179,4 +180,69 @@ func SupportsTags(schema *openapi3.Schema) bool {
 // SupportsLocation reports whether the schema includes a writable "location" property, following allOf inheritance.
 func SupportsLocation(schema *openapi3.Schema) bool {
 	return hasWritableProperty(schema, "location")
+}
+
+// GeneratedModule holds all generated HCL files in memory, enabling comparison
+// without writing to disk.
+type GeneratedModule struct {
+	Terraform *hclwrite.File
+	Variables *hclwrite.File
+	Locals    *hclwrite.File
+	Main      *hclwrite.File
+	Outputs   *hclwrite.File
+}
+
+// GenerateInMemory runs the generation pipeline and returns all files in memory
+// without writing to disk. This is used by the update command to produce baseline
+// and new-version outputs for comparison.
+func GenerateInMemory(resourceType string, opts ...GeneratorOption) (*GeneratedModule, error) {
+	o := &generatorOptions{
+		resourceType: resourceType,
+		outputDir:    ".",
+		localName:    "resource_body",
+	}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	hasSchema := o.schema != nil
+	supportsIdentity := SupportsIdentity(o.schema)
+
+	var caps openapi.InterfaceCapabilities
+	var nameSchema *openapi3.Schema
+	if o.spec != nil {
+		caps = openapi.DetectInterfaceCapabilities(o.spec, o.resourceType)
+		nameSchema, _ = openapi.FindResourceNameSchema(o.spec, o.resourceType)
+	}
+
+	var secrets []secretField
+	if hasSchema {
+		var err error
+		secrets, err = collectSecretFields(o.schema, "")
+		if err != nil {
+			return nil, fmt.Errorf("collecting secret fields: %w", err)
+		}
+	}
+
+	mod := &GeneratedModule{
+		Terraform: buildTerraform(),
+		Outputs:   buildOutputs(o.schema),
+	}
+
+	var err error
+	mod.Variables, err = buildVariables(o.schema, o.supportsTags, o.supportsLocation, supportsIdentity, secrets, nameSchema, caps, o.moduleNamePrefix)
+	if err != nil {
+		return nil, fmt.Errorf("building variables: %w", err)
+	}
+
+	if hasSchema {
+		mod.Locals, err = buildLocals(o.schema, o.localName, supportsIdentity, secrets, o.resourceType, caps, o.moduleNamePrefix)
+		if err != nil {
+			return nil, fmt.Errorf("building locals: %w", err)
+		}
+	}
+
+	mod.Main = buildMain(o.schema, o.resourceType, o.apiVersion, o.localName, o.supportsTags, o.supportsLocation, supportsIdentity, hasSchema, secrets)
+
+	return mod, nil
 }

@@ -14,9 +14,9 @@ import (
 	"github.com/zclconf/go-cty/cty"
 )
 
-func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string, caps openapi.InterfaceCapabilities, moduleNamePrefix string, outputDir string) error {
+func buildLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string, caps openapi.InterfaceCapabilities, moduleNamePrefix string) (*hclwrite.File, error) {
 	if schema == nil {
-		return nil
+		return nil, nil
 	}
 
 	file := hclwrite.NewEmptyFile()
@@ -28,7 +28,7 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 	secretPaths := newSecretPathSet(secrets)
 	valueExpression, err := constructValue(schema, hclwrite.TokensForIdentifier("var"), true, secretPaths, "", supportsIdentity, moduleNamePrefix)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	localBody.SetAttributeRaw(localName, valueExpression)
 
@@ -43,6 +43,17 @@ func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity 
 		localBody.SetAttributeRaw("private_endpoints", tokensForPrivateEndpointsLocal(resourceType))
 	}
 
+	return file, nil
+}
+
+func generateLocals(schema *openapi3.Schema, localName string, supportsIdentity bool, secrets []secretField, resourceType string, caps openapi.InterfaceCapabilities, moduleNamePrefix string, outputDir string) error {
+	file, err := buildLocals(schema, localName, supportsIdentity, secrets, resourceType, caps, moduleNamePrefix)
+	if err != nil {
+		return err
+	}
+	if file == nil {
+		return nil
+	}
 	return hclgen.WriteFileToDir(outputDir, "locals.tf", file)
 }
 
