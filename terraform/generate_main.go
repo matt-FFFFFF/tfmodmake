@@ -7,6 +7,7 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
+	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -49,9 +50,21 @@ func buildMain(schema *openapi3.Schema, resourceType, apiVersion, localName stri
 
 	// Add sensitive_body if there are secrets
 	if len(secrets) > 0 {
+		// Null-check intermediate containers in sensitive_body that correspond
+		// to flattened property variables. Without this, AzAPI schema validation
+		// rejects partial objects that are missing required non-secret siblings
+		// (e.g., servicePrincipalProfile.clientId when only .secret is present).
+		sensitiveNullCheck := func(pathSegments []string) hclwrite.Tokens {
+			if len(pathSegments) != 2 || pathSegments[0] != "properties" {
+				return nil
+			}
+			varName := naming.ToSnakeCase(pathSegments[1])
+			return hclgen.TokensForTraversal("var", varName)
+		}
+
 		sensitiveBodyTokens := tokensForSensitiveBody(secrets, func(secret secretField) hclwrite.Tokens {
 			return hclgen.TokensForTraversal("var", secret.varName)
-		})
+		}, sensitiveNullCheck)
 		resourceBody.SetAttributeRaw("sensitive_body", sensitiveBodyTokens)
 
 		// Add sensitive_body_version map

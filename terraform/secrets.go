@@ -8,6 +8,7 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclwrite"
+	"github.com/matt-FFFFFF/tfmodmake/hclgen"
 	"github.com/matt-FFFFFF/tfmodmake/naming"
 	"github.com/matt-FFFFFF/tfmodmake/openapi"
 )
@@ -229,7 +230,19 @@ func (n *sensitiveBodyNode) ensureChild(key string) *sensitiveBodyNode {
 	return child
 }
 
-func tokensForSensitiveBody(secrets []secretField, valueFor func(secretField) hclwrite.Tokens) hclwrite.Tokens {
+// nullCheckFunc returns HCL tokens for an expression that should be null-checked
+// when rendering a sensitive_body intermediate container at the given path segments.
+// If the container should not be null-checked, it returns nil.
+type nullCheckFunc func(pathSegments []string) hclwrite.Tokens
+
+// tokensForSensitiveBody builds a nested HCL object expression for the sensitive_body
+// attribute, reconstructing the path hierarchy from flat secret field paths.
+//
+// The nullCheckFor callback allows intermediate container objects to be wrapped with
+// null-equality ternaries so that partial objects aren't emitted when the parent
+// variable is null. This prevents AzAPI schema validation errors where a container
+// has required non-secret siblings that are absent from sensitive_body.
+func tokensForSensitiveBody(secrets []secretField, valueFor func(secretField) hclwrite.Tokens, nullCheckFor nullCheckFunc) hclwrite.Tokens {
 	root := &sensitiveBodyNode{}
 	for i := range secrets {
 		path := strings.TrimSpace(secrets[i].path)
@@ -248,8 +261,8 @@ func tokensForSensitiveBody(secrets []secretField, valueFor func(secretField) hc
 		node.secret = &secrets[i]
 	}
 
-	var render func(node *sensitiveBodyNode) hclwrite.Tokens
-	render = func(node *sensitiveBodyNode) hclwrite.Tokens {
+	var render func(node *sensitiveBodyNode, pathSegments []string) hclwrite.Tokens
+	render = func(node *sensitiveBodyNode, pathSegments []string) hclwrite.Tokens {
 		if node == nil || len(node.children) == 0 {
 			return hclwrite.TokensForObject(nil)
 		}
@@ -262,11 +275,21 @@ func tokensForSensitiveBody(secrets []secretField, valueFor func(secretField) hc
 		attrs := make([]hclwrite.ObjectAttrTokens, 0, len(keys))
 		for _, k := range keys {
 			child := node.children[k]
+			childPath := append(pathSegments, k) //nolint:gocritic // intentionally creating new slice per child
 			var value hclwrite.Tokens
 			if child != nil && child.secret != nil && len(child.children) == 0 {
 				value = valueFor(*child.secret)
 			} else {
-				value = render(child)
+				childObj := render(child, childPath)
+				if nullCheckFor != nil {
+					if checkExpr := nullCheckFor(childPath); checkExpr != nil {
+						value = hclgen.NullEqualityTernary(checkExpr, childObj)
+					} else {
+						value = childObj
+					}
+				} else {
+					value = childObj
+				}
 			}
 			attrs = append(attrs, hclwrite.ObjectAttrTokens{
 				Name:  tokensForObjectKey(k),
@@ -276,5 +299,5 @@ func tokensForSensitiveBody(secrets []secretField, valueFor func(secretField) hc
 		return hclwrite.TokensForObject(attrs)
 	}
 
-	return render(root)
+	return render(root, nil)
 }

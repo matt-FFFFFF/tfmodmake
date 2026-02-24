@@ -81,6 +81,30 @@ run_keyvault_case() {
   echo "ok"
 }
 
+run_update_case() {
+  echo "== managedClusters (update) =="
+
+  local workdir
+  workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
+  WORKDIRS+=("$workdir")
+
+  local stable_spec="https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json"
+  local spec_root="https://github.com/Azure/azure-rest-api-specs/tree/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks"
+  local resource="Microsoft.ContainerService/managedClusters"
+
+  # Step 1: Generate initial module with stable API version
+  (cd "$workdir" && "$TFMODMAKE_BIN" gen -spec "$stable_spec" -resource "$resource" >/dev/null)
+  (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
+  (cd "$workdir" && terraform validate -no-color >/dev/null)
+
+  # Step 2: Update to latest preview version
+  (cd "$workdir" && "$TFMODMAKE_BIN" update -spec-root "$spec_root" -include-preview -resource "$resource" >/dev/null)
+  (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
+  (cd "$workdir" && terraform validate -no-color >/dev/null)
+
+  echo "ok"
+}
+
 run_case \
   "managedClusters" \
   "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json" \
@@ -98,3 +122,5 @@ WORKDIRS+=("$workdir")
 echo "ok"
 
 run_keyvault_case
+
+run_update_case
