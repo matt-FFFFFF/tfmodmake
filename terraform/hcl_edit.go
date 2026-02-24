@@ -2,7 +2,6 @@ package terraform
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
@@ -140,12 +139,9 @@ func UpdateResponseExportValues(file *hclwrite.File, paths []string) error {
 
 // tokensForStringList creates HCL tokens for a list of string literals: ["a", "b", "c"]
 func tokensForStringList(values []string) hclwrite.Tokens {
-	// Build a quoted list expression via cty values for correctness.
-	var items []string
-	for _, v := range values {
-		items = append(items, fmt.Sprintf("%q", v))
+	ctyVals := make([]cty.Value, len(values))
+	for i, v := range values {
+		ctyVals[i] = cty.StringVal(v)
 	}
-	raw := "[" + strings.Join(items, ", ") + "]"
-	// Parse the expression to get proper tokens.
-	return hclwrite.TokensForIdentifier(raw)
+	return hclwrite.TokensForValue(cty.ListVal(ctyVals))
 }

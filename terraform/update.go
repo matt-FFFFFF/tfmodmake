@@ -32,6 +32,9 @@ type UpdateSummary struct {
 type UpdateOptions struct {
 	// ModuleDir is the directory containing the existing module.
 	ModuleDir string
+	// OldSpecs is a list of paths or URLs to the old (current) OpenAPI spec files.
+	// Used to generate the baseline for 3-way comparison.
+	OldSpecs []string
 	// NewSpecs is a list of paths or URLs to the new OpenAPI spec files.
 	NewSpecs []string
 	// ResourceType overrides the resource type (if empty, inferred from main.tf).
@@ -43,7 +46,13 @@ type UpdateOptions struct {
 }
 
 // Update upgrades an existing Terraform module to a new API version while preserving
-// user customizations.
+// user customizations. It performs a 3-way comparison:
+//  1. Baseline: generated from old (current) spec
+//  2. On-disk: the user's actual files (may include customizations)
+//  3. New: generated from the new spec
+//
+// Items where on-disk matches baseline are auto-upgraded to new. Items where on-disk
+// differs from baseline are flagged for manual review.
 func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 	if opts.ModuleDir == "" {
 		opts.ModuleDir = "."
@@ -52,7 +61,7 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 		opts.LocalName = "resource_body"
 	}
 
-	// Step 1: Read current module state
+	// Step 1: Read current module state from disk.
 	mainFile, err := ParseModuleFile(opts.ModuleDir, "main.tf")
 	if err != nil {
 		return nil, fmt.Errorf("reading main.tf: %w", err)
@@ -82,19 +91,31 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 		onDiskLocalAssignments = ExtractLocalAssignments(localsFile)
 	}
 
-	// Step 2: Generate baseline from current spec (in memory)
-	baselineResult, err := LoadResource(ctx, opts.NewSpecs, resourceType)
+	// Step 2: Generate baseline from old (current) spec for dirty detection.
+	baselineResult, err := LoadResource(ctx, opts.OldSpecs, resourceType)
 	if err != nil {
-		// If we can't load from the new specs with the old version, we might need
-		// the current spec. For now, generate baseline from what we have on disk.
-		// The baseline is used for dirty detection. If we can't produce one, we treat
-		// everything as user-modified (conservative).
-		return nil, fmt.Errorf("loading resource from specs: %w", err)
+		return nil, fmt.Errorf("loading resource from old specs: %w", err)
+	}
+	baselineModule, err := GenerateInMemory(resourceType,
+		baselineResult,
+		WithLocalName(opts.LocalName),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("generating baseline module: %w", err)
+	}
+	baselineVarTypes := ExtractVariableTypes(baselineModule.Variables)
+	var baselineLocalAssignments map[string]hclwrite.Tokens
+	if baselineModule.Locals != nil {
+		baselineLocalAssignments = ExtractLocalAssignments(baselineModule.Locals)
 	}
 
-	// Step 3: Generate new module from new spec (in memory)
+	// Step 3: Generate new module from new spec.
+	newResult, err := LoadResource(ctx, opts.NewSpecs, resourceType)
+	if err != nil {
+		return nil, fmt.Errorf("loading resource from new specs: %w", err)
+	}
 	newModule, err := GenerateInMemory(resourceType,
-		baselineResult,
+		newResult,
 		WithLocalName(opts.LocalName),
 	)
 	if err != nil {
@@ -117,24 +138,23 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 		NewVersion: newVersion,
 	}
 
-	// For baseline comparison, we generate from the new spec (since we don't have
-	// the old spec pinned). This means we compare on-disk types against the new
-	// generated types. Items that match the new spec are unchanged; items that differ
-	// may be user-modified OR changed by the new spec. Without the old spec baseline,
-	// we take the conservative approach: only auto-update items where we can determine
-	// the on-disk content was generated (not user-modified).
-	//
-	// For a proper 3-way comparison, we'd need the old spec. For now, we use a simpler
-	// 2-way approach: compare on-disk against new, and auto-apply all changes.
-	// The user is expected to review the diff.
+	// Step 4: 3-way comparison and apply changes.
+	// Compare on-disk against baseline to detect user modifications, then apply
+	// new spec changes only to unmodified items.
+	varComparison := CompareVariables(onDiskVarTypes, baselineVarTypes, newVarTypes)
+	localComparison := CompareLocals(onDiskLocalAssignments, baselineLocalAssignments, newLocalAssignments)
 
 	if !opts.DryRun {
 		// Update variables.tf
-		result.Variables = applyVariableChanges(varsFile, newModule.Variables, onDiskVarTypes, newVarTypes)
+		result.Variables = applyVariableChanges(varsFile, newModule.Variables, newVarTypes, varComparison)
 
-		// Update locals.tf
-		if localsFile != nil && newModule.Locals != nil {
-			result.Locals = applyLocalChanges(localsFile, newModule.Locals, onDiskLocalAssignments, newLocalAssignments)
+		// Update locals.tf — create the file if it doesn't exist but the new spec needs one.
+		if newModule.Locals != nil {
+			if localsFile == nil {
+				localsFile = hclwrite.NewEmptyFile()
+				localsFile.Body().AppendNewBlock("locals", nil)
+			}
+			result.Locals = applyLocalChanges(localsFile, newModule.Locals, newLocalAssignments, localComparison)
 		}
 
 		// Update main.tf: type attribute and response_export_values
@@ -165,11 +185,9 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 			result.OutputsRegenerated = true
 		}
 	} else {
-		// Dry run: compute what would change without writing
-		result.Variables = computeVariableChanges(onDiskVarTypes, newVarTypes)
-		if onDiskLocalAssignments != nil {
-			result.Locals = computeLocalChanges(onDiskLocalAssignments, newLocalAssignments)
-		}
+		// Dry run: compute what would change using the 3-way comparison.
+		result.Variables = summarizeComparison(varComparison)
+		result.Locals = summarizeComparison(localComparison)
 		result.MainUpdated = oldVersion != newVersion
 		result.OutputsRegenerated = true
 	}
@@ -177,109 +195,110 @@ func Update(ctx context.Context, opts UpdateOptions) (*UpdateResult, error) {
 	return result, nil
 }
 
-// applyVariableChanges modifies the on-disk variables file based on the new generated variables.
-func applyVariableChanges(diskFile, newFile *hclwrite.File, diskTypes, newTypes map[string]hclwrite.Tokens) UpdateSummary {
+// applyVariableChanges modifies the on-disk variables file based on the 3-way comparison results.
+func applyVariableChanges(diskFile, newFile *hclwrite.File, newTypes map[string]hclwrite.Tokens, comparison map[string]CompareResult) UpdateSummary {
 	var summary UpdateSummary
 
-	// Update existing variables and detect removals
-	for name, diskTokens := range diskTypes {
-		newTokens, inNew := newTypes[name]
-		if !inNew {
-			// Variable removed in new spec — remove it
-			if err := RemoveVariableBlock(diskFile, name); err == nil {
-				summary.Removed = append(summary.Removed, name)
+	for name, cmp := range comparison {
+		switch cmp {
+		case CompareIdentical:
+			// On-disk matches baseline; update to new spec type.
+			newTokens, ok := newTypes[name]
+			if !ok {
+				continue
 			}
-			continue
-		}
-		if TokensEqual(diskTokens, newTokens) {
-			summary.Unchanged = append(summary.Unchanged, name)
-		} else {
-			// Type changed — update it
-			if err := UpdateVariableType(diskFile, name, newTokens); err == nil {
-				summary.AutoUpdated = append(summary.AutoUpdated, name)
+			if err := UpdateVariableType(diskFile, name, newTokens); err != nil {
+				summary.NeedsReview = append(summary.NeedsReview, name+" (update failed: "+err.Error()+")")
+				continue
 			}
-		}
-	}
-
-	// Add new variables
-	for name := range newTypes {
-		if _, exists := diskTypes[name]; exists {
-			continue
-		}
-		if err := AddVariableBlock(diskFile, newFile, name); err == nil {
-			summary.Added = append(summary.Added, name)
-		}
-	}
-
-	return summary
-}
-
-// applyLocalChanges modifies the on-disk locals file based on the new generated locals.
-func applyLocalChanges(diskFile, newFile *hclwrite.File, diskLocals, newLocals map[string]hclwrite.Tokens) UpdateSummary {
-	var summary UpdateSummary
-
-	// Update existing locals and detect removals
-	for name, diskTokens := range diskLocals {
-		newTokens, inNew := newLocals[name]
-		if !inNew {
-			if err := RemoveLocalAttribute(diskFile, name); err == nil {
-				summary.Removed = append(summary.Removed, name)
-			}
-			continue
-		}
-		if TokensEqual(diskTokens, newTokens) {
-			summary.Unchanged = append(summary.Unchanged, name)
-		} else {
-			if err := UpdateLocalAttribute(diskFile, name, newTokens); err == nil {
-				summary.AutoUpdated = append(summary.AutoUpdated, name)
-			}
-		}
-	}
-
-	// Add new locals
-	newLocalAssignments := ExtractLocalAssignments(newFile)
-	for name, tokens := range newLocalAssignments {
-		if _, exists := diskLocals[name]; exists {
-			continue
-		}
-		if err := AddLocalAttribute(diskFile, name, tokens); err == nil {
-			summary.Added = append(summary.Added, name)
-		}
-	}
-
-	return summary
-}
-
-// computeVariableChanges computes what would change without modifying files (dry run).
-func computeVariableChanges(diskTypes, newTypes map[string]hclwrite.Tokens) UpdateSummary {
-	var summary UpdateSummary
-
-	for name, diskTokens := range diskTypes {
-		newTokens, inNew := newTypes[name]
-		if !inNew {
-			summary.Removed = append(summary.Removed, name)
-			continue
-		}
-		if TokensEqual(diskTokens, newTokens) {
-			summary.Unchanged = append(summary.Unchanged, name)
-		} else {
 			summary.AutoUpdated = append(summary.AutoUpdated, name)
-		}
-	}
 
-	for name := range newTypes {
-		if _, exists := diskTypes[name]; exists {
-			continue
+		case CompareModified:
+			// User has customized this variable — flag for manual review.
+			summary.NeedsReview = append(summary.NeedsReview, name)
+
+		case CompareNew:
+			// New variable in the new spec — add it.
+			if err := AddVariableBlock(diskFile, newFile, name); err != nil {
+				summary.NeedsReview = append(summary.NeedsReview, name+" (add failed: "+err.Error()+")")
+				continue
+			}
+			summary.Added = append(summary.Added, name)
+
+		case CompareRemoved:
+			// Variable removed in the new spec — remove it.
+			if err := RemoveVariableBlock(diskFile, name); err != nil {
+				summary.NeedsReview = append(summary.NeedsReview, name+" (remove failed: "+err.Error()+")")
+				continue
+			}
+			summary.Removed = append(summary.Removed, name)
 		}
-		summary.Added = append(summary.Added, name)
 	}
 
 	return summary
 }
 
-// computeLocalChanges computes what local changes would be made (dry run).
-func computeLocalChanges(diskLocals, newLocals map[string]hclwrite.Tokens) UpdateSummary {
-	return computeVariableChanges(diskLocals, newLocals)
+// applyLocalChanges modifies the on-disk locals file based on the 3-way comparison results.
+func applyLocalChanges(diskFile, newFile *hclwrite.File, newLocals map[string]hclwrite.Tokens, comparison map[string]CompareResult) UpdateSummary {
+	var summary UpdateSummary
+
+	newLocalAssignments := ExtractLocalAssignments(newFile)
+
+	for name, cmp := range comparison {
+		switch cmp {
+		case CompareIdentical:
+			newTokens, ok := newLocals[name]
+			if !ok {
+				continue
+			}
+			if err := UpdateLocalAttribute(diskFile, name, newTokens); err != nil {
+				summary.NeedsReview = append(summary.NeedsReview, name+" (update failed: "+err.Error()+")")
+				continue
+			}
+			summary.AutoUpdated = append(summary.AutoUpdated, name)
+
+		case CompareModified:
+			summary.NeedsReview = append(summary.NeedsReview, name)
+
+		case CompareNew:
+			tokens, ok := newLocalAssignments[name]
+			if !ok {
+				continue
+			}
+			if err := AddLocalAttribute(diskFile, name, tokens); err != nil {
+				summary.NeedsReview = append(summary.NeedsReview, name+" (add failed: "+err.Error()+")")
+				continue
+			}
+			summary.Added = append(summary.Added, name)
+
+		case CompareRemoved:
+			if err := RemoveLocalAttribute(diskFile, name); err != nil {
+				summary.NeedsReview = append(summary.NeedsReview, name+" (remove failed: "+err.Error()+")")
+				continue
+			}
+			summary.Removed = append(summary.Removed, name)
+		}
+	}
+
+	return summary
+}
+
+// summarizeComparison converts a comparison map to an UpdateSummary for dry-run mode.
+func summarizeComparison(comparison map[string]CompareResult) UpdateSummary {
+	var summary UpdateSummary
+	for name, cmp := range comparison {
+		switch cmp {
+		case CompareIdentical:
+			summary.AutoUpdated = append(summary.AutoUpdated, name)
+		case CompareModified:
+			summary.NeedsReview = append(summary.NeedsReview, name)
+		case CompareNew:
+			summary.Added = append(summary.Added, name)
+		case CompareRemoved:
+			summary.Removed = append(summary.Removed, name)
+		}
+	}
+	return summary
 }
 
 // writeHCLFile writes a parsed HCL file back to disk.

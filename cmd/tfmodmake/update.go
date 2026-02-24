@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	specpkg "github.com/matt-FFFFFF/tfmodmake/specs"
 	"github.com/matt-FFFFFF/tfmodmake/terraform"
@@ -60,15 +61,9 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 			return fmt.Errorf("could not infer resource type from main.tf (use --resource to specify): %w", err)
 		}
 		// Strip the @apiVersion suffix if present
-		if idx := len(inferred) - 1; idx >= 0 {
-			for i := len(inferred) - 1; i >= 0; i-- {
-				if inferred[i] == '@' {
-					resourceType = inferred[:i]
-					break
-				}
-			}
-		}
-		if resourceType == "" {
+		if idx := strings.LastIndex(inferred, "@"); idx > 0 {
+			resourceType = inferred[:idx]
+		} else {
 			resourceType = inferred
 		}
 	}
@@ -76,9 +71,42 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	githubToken := specpkg.GithubTokenFromEnv()
 	includeGlobs := defaultDiscoveryGlobsForParent(resourceType)
 
-	// Resolve specs
+	// Extract the old API version from the existing module's main.tf so we can
+	// resolve the old spec for a proper 3-way comparison.
+	oldVersion, err := extractOldVersionFromMainTf()
+	if err != nil {
+		return fmt.Errorf("could not extract old API version from main.tf: %w", err)
+	}
+
+	// Resolve old specs using PinVersion to get the baseline spec.
+	var oldSpecSources []string
+	if specRoot != "" {
+		resolver := specpkg.DefaultSpecResolver{}
+		oldResolveReq := specpkg.ResolveRequest{
+			GitHubServiceRoot: specRoot,
+			IncludeGlobs:      includeGlobs,
+			PinVersion:        oldVersion,
+			GitHubToken:       githubToken,
+		}
+		oldResolved, resolveErr := resolver.Resolve(ctx, oldResolveReq)
+		if resolveErr != nil {
+			return fmt.Errorf("failed to resolve old specs for version %s: %w", oldVersion, resolveErr)
+		}
+		for _, spec := range oldResolved.Specs {
+			if spec.Source != "" {
+				oldSpecSources = append(oldSpecSources, spec.Source)
+			}
+		}
+	}
+	// If we couldn't resolve old specs via spec-root, fall back to seed specs
+	// (the caller may have provided old specs directly).
+	if len(oldSpecSources) == 0 {
+		oldSpecSources = specs
+	}
+
+	// Resolve new specs (latest version).
 	resolver := specpkg.DefaultSpecResolver{}
-	resolveReq := specpkg.ResolveRequest{
+	newResolveReq := specpkg.ResolveRequest{
 		Seeds:             specs,
 		GitHubServiceRoot: specRoot,
 		DiscoverFromSeed:  false,
@@ -86,26 +114,26 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 		IncludePreview:    includePreview,
 		GitHubToken:       githubToken,
 	}
-	resolved, err := resolver.Resolve(ctx, resolveReq)
+	newResolved, err := resolver.Resolve(ctx, newResolveReq)
 	if err != nil {
-		return fmt.Errorf("failed to resolve specs: %w", err)
+		return fmt.Errorf("failed to resolve new specs: %w", err)
 	}
 
-	specSources := make([]string, 0, len(resolved.Specs))
-	for _, spec := range resolved.Specs {
-		if spec.Source == "" {
-			continue
+	newSpecSources := make([]string, 0, len(newResolved.Specs))
+	for _, spec := range newResolved.Specs {
+		if spec.Source != "" {
+			newSpecSources = append(newSpecSources, spec.Source)
 		}
-		specSources = append(specSources, spec.Source)
 	}
-	if len(specSources) == 0 {
-		return fmt.Errorf("no specs resolved. Please provide --spec or --spec-root")
+	if len(newSpecSources) == 0 {
+		return fmt.Errorf("no new specs resolved. Please provide --spec or --spec-root")
 	}
 
-	// Run update
+	// Run update with separate old and new specs for 3-way comparison.
 	result, err := terraform.Update(ctx, terraform.UpdateOptions{
 		ModuleDir:    ".",
-		NewSpecs:     specSources,
+		OldSpecs:     oldSpecSources,
+		NewSpecs:     newSpecSources,
 		ResourceType: resourceType,
 		DryRun:       dryRun,
 	})
@@ -116,6 +144,19 @@ func runUpdate(ctx context.Context, cmd *cli.Command) error {
 	// Print summary
 	printUpdateSummary(result, dryRun)
 	return nil
+}
+
+// extractOldVersionFromMainTf reads main.tf and extracts the old API version.
+func extractOldVersionFromMainTf() (string, error) {
+	mainFile, err := terraform.ParseModuleFile(".", "main.tf")
+	if err != nil {
+		return "", fmt.Errorf("reading main.tf: %w", err)
+	}
+	_, version, err := terraform.ExtractResourceTypeAndVersion(mainFile)
+	if err != nil {
+		return "", err
+	}
+	return version, nil
 }
 
 func printUpdateSummary(result *terraform.UpdateResult, dryRun bool) {
