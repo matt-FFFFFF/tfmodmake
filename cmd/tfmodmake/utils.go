@@ -8,22 +8,6 @@ import (
 	"github.com/matt-FFFFFF/tfmodmake/naming"
 )
 
-func defaultDiscoveryGlobsForParent(parentType string) []string {
-	// When the user didn't specify -include (defaults to *.json), try a narrower
-	// pattern first to avoid pulling unrelated specs from big version folders.
-	// If it matches nothing, discovery code will fall back to *.json.
-	last := parentType
-	if idx := strings.LastIndex(parentType, "/"); idx >= 0 {
-		last = parentType[idx+1:]
-	}
-	if last == "" {
-		return []string{"*.json"}
-	}
-	// Common ARM spec files are PascalCase, e.g. ManagedEnvironments*.json.
-	pascal := strings.ToUpper(last[:1]) + last[1:]
-	return []string{pascal + "*.json", "*.json"}
-}
-
 // deriveModuleName derives a module folder name from a child resource type.
 // Example: "Microsoft.App/managedEnvironments/storages" -> "storages"
 func deriveModuleName(childType string) string {

@@ -7,9 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/matt-FFFFFF/tfmodmake/openapi"
-	specpkg "github.com/matt-FFFFFF/tfmodmake/specs"
+	"github.com/matt-FFFFFF/tfmodmake/bicepdata"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/matt-FFFFFF/tfmodmake/submodule"
 	"github.com/matt-FFFFFF/tfmodmake/terraform"
 	"github.com/urfave/cli/v3"
@@ -21,10 +20,6 @@ func GenCommand() *cli.Command {
 		Aliases: []string{"g"},
 		Usage:   "Generate base module",
 		Flags: []cli.Flag{
-			&cli.StringSliceFlag{
-				Name:  "spec",
-				Usage: "Path or URL to the OpenAPI specification",
-			},
 			&cli.StringFlag{
 				Name:  "resource",
 				Usage: "Resource type to generate (e.g., Microsoft.ContainerService/managedClusters)",
@@ -33,6 +28,14 @@ func GenCommand() *cli.Command {
 				Name:  "local-name",
 				Usage: "Name of the local variable to generate (default: resource_body)",
 			},
+			&cli.StringFlag{
+				Name:  "api-version",
+				Usage: "Specific API version to use",
+			},
+			&cli.BoolFlag{
+				Name:  "include-preview",
+				Usage: "Include latest preview API version",
+			},
 		},
 		Action: runGen,
 		Commands: []*cli.Command{
@@ -40,27 +43,13 @@ func GenCommand() *cli.Command {
 				Name:  "submodule",
 				Usage: "Generate a child/submodule and wire it into parent",
 				Flags: []cli.Flag{
-					&cli.StringSliceFlag{
-						Name:  "spec",
-						Usage: "Path or URL to OpenAPI spec",
-					},
 					&cli.StringFlag{
-						Name:  "spec-root",
-						Usage: "GitHub tree URL under Azure/azure-rest-api-specs",
+						Name:  "api-version",
+						Usage: "Specific API version to use",
 					},
 					&cli.BoolFlag{
 						Name:  "include-preview",
 						Usage: "Include latest preview API version",
-					},
-					&cli.StringFlag{
-						Name:  "include",
-						Value: "*.json",
-						Usage: "Glob filter used when discovering spec files",
-					},
-					&cli.StringFlag{
-						Name:     "parent",
-						Usage:    "Parent resource type",
-						Required: true,
 					},
 					&cli.StringFlag{
 						Name:     "child",
@@ -87,21 +76,13 @@ func GenCommand() *cli.Command {
 				Name:  "avm",
 				Usage: "Generate base module + child submodules + AVM interfaces",
 				Flags: []cli.Flag{
-					&cli.StringSliceFlag{
-						Name:  "spec",
-						Usage: "Path or URL to OpenAPI spec",
-					},
 					&cli.StringFlag{
-						Name:  "spec-root",
-						Usage: "GitHub tree URL under Azure/azure-rest-api-specs",
+						Name:  "api-version",
+						Usage: "Specific API version to use",
 					},
 					&cli.BoolFlag{
 						Name:  "include-preview",
 						Usage: "Include latest preview API version",
-					},
-					&cli.BoolFlag{
-						Name:  "print-resolved-specs",
-						Usage: "Print resolved spec list to stderr",
 					},
 					&cli.StringFlag{
 						Name:     "resource",
@@ -129,64 +110,25 @@ func GenCommand() *cli.Command {
 }
 
 func runGen(ctx context.Context, cmd *cli.Command) error {
-	specs := cmd.StringSlice("spec")
 	resourceType := cmd.String("resource")
 	localName := cmd.String("local-name")
+	apiVersion := cmd.String("api-version")
+	includePreview := cmd.Bool("include-preview")
 
-	if len(specs) == 0 || resourceType == "" {
+	if resourceType == "" {
 		return cli.ShowSubcommandHelp(cmd)
 	}
 
-	return generateBaseModule(ctx, specs, resourceType, localName)
+	return generateBaseModule(ctx, resourceType, apiVersion, includePreview, localName)
 }
 
 func runAddChild(ctx context.Context, cmd *cli.Command) error {
-	specs := cmd.StringSlice("spec")
-	specRoot := cmd.String("spec-root")
+	apiVersion := cmd.String("api-version")
 	includePreview := cmd.Bool("include-preview")
-	includeGlob := cmd.String("include")
-	parent := cmd.String("parent")
 	child := cmd.String("child")
 	moduleDir := cmd.String("module-dir")
 	moduleName := cmd.String("module-name")
 	dryRun := cmd.Bool("dry-run")
-
-	if len(specs) == 0 && specRoot == "" {
-		return fmt.Errorf("at least one -spec or -spec-root is required")
-	}
-
-	githubToken := specpkg.GithubTokenFromEnv()
-
-	includeGlobs := []string{includeGlob}
-	if includeGlob == "*.json" && parent != "" {
-		includeGlobs = defaultDiscoveryGlobsForParent(parent)
-	}
-
-	resolver := specpkg.DefaultSpecResolver{}
-	resolveReq := specpkg.ResolveRequest{
-		Seeds:             specs,
-		GitHubServiceRoot: specRoot,
-		DiscoverFromSeed:  false,
-		IncludeGlobs:      includeGlobs,
-		IncludePreview:    includePreview,
-		GitHubToken:       githubToken,
-	}
-	resolved, err := resolver.Resolve(ctx, resolveReq)
-	if err != nil {
-		return fmt.Errorf("failed to resolve specs: %w", err)
-	}
-
-	specSources := make([]string, 0, len(resolved.Specs))
-	for _, spec := range resolved.Specs {
-		if spec.Source == "" {
-			continue
-		}
-		specSources = append(specSources, spec.Source)
-	}
-
-	if len(specSources) == 0 {
-		return fmt.Errorf("no specs resolved. Please provide -spec or -spec-root")
-	}
 
 	finalModuleName := moduleName
 	if finalModuleName == "" {
@@ -207,11 +149,10 @@ func runAddChild(ctx context.Context, cmd *cli.Command) error {
 		moduleDirName := filepath.Base(modulePath)
 		fmt.Printf("  - variables.%s.tf\n", moduleDirName)
 		fmt.Printf("  - main.%s.tf\n", moduleDirName)
-		fmt.Printf("DRY RUN: Using %d resolved spec(s)\n", len(specSources))
 		return nil
 	}
 
-	if err := generateChildModule(ctx, specSources, child, modulePath); err != nil {
+	if err := generateChildModule(ctx, child, apiVersion, includePreview, modulePath); err != nil {
 		return fmt.Errorf("failed to generate child module: %w", err)
 	}
 
@@ -225,51 +166,12 @@ func runAddChild(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runGenAVM(ctx context.Context, cmd *cli.Command) error {
-	specs := cmd.StringSlice("spec")
-	specRoot := cmd.String("spec-root")
-	includePreview := cmd.Bool("include-preview")
-	printResolvedSpecs := cmd.Bool("print-resolved-specs")
 	resourceType := cmd.String("resource")
 	localName := cmd.String("local-name")
+	apiVersion := cmd.String("api-version")
+	includePreview := cmd.Bool("include-preview")
 	moduleDir := cmd.String("module-dir")
 	dryRun := cmd.Bool("dry-run")
-
-	if len(specs) == 0 && specRoot == "" {
-		return fmt.Errorf("at least one -spec or -spec-root is required")
-	}
-
-	githubToken := specpkg.GithubTokenFromEnv()
-	includeGlobs := defaultDiscoveryGlobsForParent(resourceType)
-
-	resolver := specpkg.DefaultSpecResolver{}
-	resolveReq := specpkg.ResolveRequest{
-		Seeds:             specs,
-		GitHubServiceRoot: specRoot,
-		DiscoverFromSeed:  false,
-		IncludeGlobs:      includeGlobs,
-		IncludePreview:    includePreview,
-		GitHubToken:       githubToken,
-	}
-	resolved, err := resolver.Resolve(ctx, resolveReq)
-	if err != nil {
-		return fmt.Errorf("failed to resolve specs: %w", err)
-	}
-
-	if printResolvedSpecs {
-		specpkg.WriteResolvedSpecs(os.Stderr, resolved.Specs)
-	}
-
-	specSources := make([]string, 0, len(resolved.Specs))
-	for _, spec := range resolved.Specs {
-		if spec.Source == "" {
-			continue
-		}
-		specSources = append(specSources, spec.Source)
-	}
-
-	if len(specSources) == 0 {
-		return fmt.Errorf("no specs resolved. Please provide -spec or -spec-root")
-	}
 
 	if dryRun {
 		fmt.Println("DRY RUN: Would execute the following steps:")
@@ -277,11 +179,10 @@ func runGenAVM(ctx context.Context, cmd *cli.Command) error {
 		fmt.Printf("2. Discover children under parent: %s\n", resourceType)
 		fmt.Printf("3. Generate submodule for each discovered child in: %s/\n", moduleDir)
 		fmt.Printf("4. Generate main.interfaces.tf\n")
-		fmt.Printf("Using %d resolved spec(s)\n", len(specSources))
 		return nil
 	}
 
-	if err := orchestrateAVMGeneration(ctx, specSources, resourceType, localName, moduleDir); err != nil {
+	if err := orchestrateAVMGeneration(ctx, resourceType, apiVersion, includePreview, localName, moduleDir); err != nil {
 		return fmt.Errorf("failed to generate AVM module: %w", err)
 	}
 
@@ -290,28 +191,23 @@ func runGenAVM(ctx context.Context, cmd *cli.Command) error {
 }
 
 // generateChildModule generates a child module scaffold at the specified path.
-func generateChildModule(ctx context.Context, specs []string, childType, modulePath string) error {
-	// Create module directory if it doesn't exist
+func generateChildModule(ctx context.Context, childType, apiVersion string, includePreview bool, modulePath string) error {
 	if err := os.MkdirAll(modulePath, 0o755); err != nil {
 		return fmt.Errorf("failed to create module directory: %w", err)
 	}
 
-	// Load specs and find the child resource
-	// Load the child resource from specs
-	result, err := terraform.LoadResource(ctx, specs, childType)
+	var loadOpts []terraform.LoadOption
+	if apiVersion != "" {
+		loadOpts = append(loadOpts, terraform.WithAPIVersionLoad(apiVersion))
+	}
+	loadOpts = append(loadOpts, terraform.WithIncludePreview(includePreview))
+
+	result, err := terraform.LoadResource(ctx, childType, loadOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to load child resource: %w", err)
 	}
 
-	// Derive module name for variable renaming context
 	moduleName := deriveModuleName(childType)
-
-	// Ensure module directory exists
-	if err := os.MkdirAll(modulePath, 0o755); err != nil {
-		return fmt.Errorf("failed to create module directory %s: %w", modulePath, err)
-	}
-
-	// Generate Terraform files in the module directory
 	localName := "resource_body"
 	if err := terraform.Generate(childType,
 		result,
@@ -326,51 +222,45 @@ func generateChildModule(ctx context.Context, specs []string, childType, moduleP
 }
 
 // orchestrateAVMGeneration performs the full AVM generation workflow
-func orchestrateAVMGeneration(ctx context.Context, specSources []string, resourceType, localName, moduleDir string) error {
+func orchestrateAVMGeneration(ctx context.Context, resourceType, apiVersion string, includePreview bool, localName, moduleDir string) error {
 	// Step 1: Generate base module
 	fmt.Println("Step 1/4: Generating base module...")
-	if err := generateBaseModule(ctx, specSources, resourceType, localName); err != nil {
+	if err := generateBaseModule(ctx, resourceType, apiVersion, includePreview, localName); err != nil {
 		return fmt.Errorf("failed to generate base module: %w", err)
 	}
 
-	// Step 2: Discover children
+	// Step 2: Discover children from bicep-types index
 	fmt.Println("Step 2/4: Discovering child resources...")
-	opts := openapi.DiscoverChildrenOptions{
-		Specs:  specSources,
-		Parent: resourceType,
-		Depth:  1,
-	}
-	result, err := openapi.DiscoverChildren(opts)
+	indexData, err := bicepdata.FetchIndex(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to discover children: %w", err)
+		return fmt.Errorf("failed to fetch bicep-types index: %w", err)
 	}
+	idx, err := bicepdata.ParseIndex(indexData)
+	if err != nil {
+		return fmt.Errorf("failed to parse bicep-types index: %w", err)
+	}
+	children := schema.DiscoverChildren(idx, resourceType, 1)
 
-	fmt.Printf("Found %d deployable child resource type(s)\n", len(result.Deployable))
+	fmt.Printf("Found %d child resource type(s)\n", len(children))
 
 	// Step 3: Generate submodule for each child
-	if len(result.Deployable) > 0 {
+	if len(children) > 0 {
 		fmt.Println("Step 3/4: Generating child submodules...")
-		for i, child := range result.Deployable {
-			// Some child resource types are managed via AVM interfaces on the parent module.
-			// For example, private endpoints are configured through the interfaces module and
-			// should not be generated as a standalone child submodule.
+		for i, child := range children {
 			if isInterfaceManagedChild(child.ResourceType) {
-				fmt.Printf("  [%d/%d] Skipping interface-managed child %s\n", i+1, len(result.Deployable), child.ResourceType)
+				fmt.Printf("  [%d/%d] Skipping interface-managed child %s\n", i+1, len(children), child.ResourceType)
 				continue
 			}
 
-			fmt.Printf("  [%d/%d] Generating submodule for %s...\n", i+1, len(result.Deployable), child.ResourceType)
+			fmt.Printf("  [%d/%d] Generating submodule for %s...\n", i+1, len(children), child.ResourceType)
 
-			// Derive module name from child type
 			moduleName := deriveModuleName(child.ResourceType)
 			modulePath := filepath.Join(moduleDir, moduleName)
 
-			// Generate child module
-			if err := generateChildModule(ctx, specSources, child.ResourceType, modulePath); err != nil {
+			if err := generateChildModule(ctx, child.ResourceType, apiVersion, includePreview, modulePath); err != nil {
 				return fmt.Errorf("failed to generate child module for %s: %w", child.ResourceType, err)
 			}
 
-			// Wire child module into parent
 			if err := submodule.Generate(modulePath); err != nil {
 				return fmt.Errorf("failed to wire child module for %s: %w", child.ResourceType, err)
 			}
@@ -381,20 +271,12 @@ func orchestrateAVMGeneration(ctx context.Context, specSources []string, resourc
 
 	// Step 4: Generate AVM interfaces
 	fmt.Println("Step 4/4: Generating AVM interfaces...")
-	// Load the spec for capability detection (reuse the logic from generateBaseModule)
-	var doc *openapi3.T
-	for _, specPath := range specSources {
-		loadedDoc, err := openapi.LoadSpec(specPath)
-		if err != nil {
-			continue
-		}
-		// Verify this spec contains the resource
-		if _, err := openapi.FindResource(loadedDoc, resourceType); err == nil {
-			doc = loadedDoc
-			break
-		}
+	var rs *schema.ResourceSchema
+	loaded, loadErr := bicepdata.LoadResourceFromIndex(ctx, idx, resourceType, apiVersion, includePreview, nil)
+	if loadErr == nil {
+		rs, _ = schema.ConvertResource(loaded)
 	}
-	if err := terraform.GenerateInterfacesFile(resourceType, doc, "."); err != nil {
+	if err := terraform.GenerateInterfacesFile(resourceType, rs, "."); err != nil {
 		return fmt.Errorf("failed to generate AVM interfaces: %w", err)
 	}
 
@@ -412,20 +294,23 @@ func isInterfaceManagedChild(childResourceType string) bool {
 }
 
 // generateBaseModule generates the base module files in the current directory
-func generateBaseModule(ctx context.Context, specSources []string, resourceType, localName string) error {
-	// Load the resource from specs
-	result, err := terraform.LoadResource(ctx, specSources, resourceType)
+func generateBaseModule(ctx context.Context, resourceType, apiVersion string, includePreview bool, localName string) error {
+	var loadOpts []terraform.LoadOption
+	if apiVersion != "" {
+		loadOpts = append(loadOpts, terraform.WithAPIVersionLoad(apiVersion))
+	}
+	loadOpts = append(loadOpts, terraform.WithIncludePreview(includePreview))
+
+	result, err := terraform.LoadResource(ctx, resourceType, loadOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to load resource: %w", err)
 	}
 
-	// Determine local name
 	finalLocalName := "resource_body"
 	if localName != "" {
 		finalLocalName = localName
 	}
 
-	// Generate Terraform files
 	return terraform.Generate(resourceType,
 		result,
 		terraform.WithLocalName(finalLocalName),

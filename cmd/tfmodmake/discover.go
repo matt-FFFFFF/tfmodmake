@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
+	"sort"
+	"strings"
 
-	"github.com/matt-FFFFFF/tfmodmake/openapi"
-	specpkg "github.com/matt-FFFFFF/tfmodmake/specs"
+	"github.com/matt-FFFFFF/tfmodmake/bicepdata"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/urfave/cli/v3"
 )
 
@@ -19,27 +21,6 @@ func DiscoverCommand() *cli.Command {
 				Name:  "children",
 				Usage: "List deployable child resource types",
 				Flags: []cli.Flag{
-					&cli.StringSliceFlag{
-						Name:  "spec",
-						Usage: "Path or URL to OpenAPI spec",
-					},
-					&cli.StringFlag{
-						Name:  "spec-root",
-						Usage: "GitHub tree URL under Azure/azure-rest-api-specs",
-					},
-					&cli.BoolFlag{
-						Name:  "discover",
-						Usage: "Discover additional spec files",
-					},
-					&cli.BoolFlag{
-						Name:  "include-preview",
-						Usage: "Include latest preview API version",
-					},
-					&cli.StringFlag{
-						Name:  "include",
-						Value: "*.json",
-						Usage: "Glob filter used when discovering spec files",
-					},
 					&cli.StringFlag{
 						Name:     "parent",
 						Usage:    "Parent resource type",
@@ -49,84 +30,85 @@ func DiscoverCommand() *cli.Command {
 						Name:  "json",
 						Usage: "Output results as JSON",
 					},
-					&cli.BoolFlag{
-						Name:  "print-resolved-specs",
-						Usage: "Print the resolved spec list to stderr",
-					},
 				},
 				Action: runDiscoverChildren,
+			},
+			{
+				Name:  "versions",
+				Usage: "List available API versions for a resource type",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "resource",
+						Usage:    "Resource type to list versions for",
+						Required: true,
+					},
+				},
+				Action: runDiscoverVersions,
 			},
 		},
 	}
 }
 
 func runDiscoverChildren(ctx context.Context, cmd *cli.Command) error {
-	specs := cmd.StringSlice("spec")
-	specRoot := cmd.String("spec-root")
-	discoverFromSpec := cmd.Bool("discover")
-	includePreview := cmd.Bool("include-preview")
-	includeGlob := cmd.String("include")
 	parent := cmd.String("parent")
 	jsonOutput := cmd.Bool("json")
-	printResolvedSpecs := cmd.Bool("print-resolved-specs")
 
-	githubToken := specpkg.GithubTokenFromEnv()
-
-	includeGlobs := []string{includeGlob}
-	if includeGlob == "*.json" && parent != "" {
-		includeGlobs = defaultDiscoveryGlobsForParent(parent)
-	}
-
-	resolver := specpkg.DefaultSpecResolver{}
-	resolveReq := specpkg.ResolveRequest{
-		Seeds:             specs,
-		GitHubServiceRoot: specRoot,
-		DiscoverFromSeed:  discoverFromSpec,
-		IncludeGlobs:      includeGlobs,
-		IncludePreview:    includePreview,
-		GitHubToken:       githubToken,
-	}
-	resolved, err := resolver.Resolve(ctx, resolveReq)
+	indexData, err := bicepdata.FetchIndex(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to resolve specs: %w", err)
+		return fmt.Errorf("failed to fetch bicep-types index: %w", err)
 	}
-
-	if printResolvedSpecs {
-		specpkg.WriteResolvedSpecs(os.Stderr, resolved.Specs)
-	}
-
-	specSources := make([]string, 0, len(resolved.Specs))
-	for _, spec := range resolved.Specs {
-		if spec.Source == "" {
-			continue
-		}
-		specSources = append(specSources, spec.Source)
-	}
-
-	if len(specSources) == 0 {
-		return fmt.Errorf("no specs resolved. Please provide -spec or -spec-root")
-	}
-
-	opts := openapi.DiscoverChildrenOptions{
-		Specs:  specSources,
-		Parent: parent,
-		Depth:  1,
-	}
-
-	result, err := openapi.DiscoverChildren(opts)
+	idx, err := bicepdata.ParseIndex(indexData)
 	if err != nil {
-		return fmt.Errorf("failed to discover children: %w", err)
+		return fmt.Errorf("failed to parse bicep-types index: %w", err)
 	}
+
+	children := schema.DiscoverChildren(idx, parent, 1)
 
 	if jsonOutput {
-		jsonStr, err := openapi.FormatChildrenAsJSON(result)
+		data, err := json.MarshalIndent(children, "", "  ")
 		if err != nil {
 			return fmt.Errorf("failed to format as JSON: %w", err)
 		}
-		fmt.Println(jsonStr)
+		fmt.Println(string(data))
 	} else {
-		text := openapi.FormatChildrenAsText(result)
-		fmt.Print(text)
+		if len(children) == 0 {
+			fmt.Printf("No child resources found for %s\n", parent)
+			return nil
+		}
+		fmt.Printf("Child resources of %s:\n", parent)
+		// Sort children by resource type for consistent output
+		sort.Slice(children, func(i, j int) bool {
+			return strings.ToLower(children[i].ResourceType) < strings.ToLower(children[j].ResourceType)
+		})
+		for _, child := range children {
+			sort.Strings(child.APIVersions)
+			fmt.Printf("  %s (API versions: %s)\n", child.ResourceType, strings.Join(child.APIVersions, ", "))
+		}
+	}
+	return nil
+}
+
+func runDiscoverVersions(ctx context.Context, cmd *cli.Command) error {
+	resourceType := cmd.String("resource")
+
+	indexData, err := bicepdata.FetchIndex(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to fetch bicep-types index: %w", err)
+	}
+	idx, err := bicepdata.ParseIndex(indexData)
+	if err != nil {
+		return fmt.Errorf("failed to parse bicep-types index: %w", err)
+	}
+
+	versions := bicepdata.ListVersions(idx, resourceType)
+	if len(versions) == 0 {
+		return fmt.Errorf("no versions found for resource type %s", resourceType)
+	}
+
+	sort.Strings(versions)
+	fmt.Printf("Available API versions for %s:\n", resourceType)
+	for _, v := range versions {
+		fmt.Printf("  %s\n", v)
 	}
 	return nil
 }

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/getkin/kin-openapi/openapi3"
-	"github.com/matt-FFFFFF/tfmodmake/openapi"
+	"github.com/matt-FFFFFF/tfmodmake/bicepdata"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/matt-FFFFFF/tfmodmake/submodule"
 	"github.com/matt-FFFFFF/tfmodmake/terraform"
 	"github.com/urfave/cli/v3"
@@ -29,8 +29,12 @@ func AddCommand() *cli.Command {
 				ArgsUsage: "[path]",
 				Flags: []cli.Flag{
 					&cli.StringFlag{
-						Name:  "spec-path",
-						Usage: "Optional: Path to OpenAPI spec file for capability detection",
+						Name:  "api-version",
+						Usage: "Optional: API version for capability detection",
+					},
+					&cli.BoolFlag{
+						Name:  "include-preview",
+						Usage: "Include preview API versions",
 					},
 				},
 				Action: runAddAVMInterfaces,
@@ -52,7 +56,8 @@ func runAddSubmodule(ctx context.Context, cmd *cli.Command) error {
 }
 
 func runAddAVMInterfaces(ctx context.Context, cmd *cli.Command) error {
-	specPath := cmd.String("spec-path")
+	apiVersion := cmd.String("api-version")
+	includePreview := cmd.Bool("include-preview")
 	targetDir := "."
 	if cmd.NArg() > 0 {
 		targetDir = cmd.Args().First()
@@ -73,15 +78,19 @@ func runAddAVMInterfaces(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("failed to infer resource type from main.tf: %w\nEnsure main.tf exists in %s", err, targetDir)
 	}
 
-	var doc *openapi3.T
-	if specPath != "" {
-		doc, err = openapi.LoadSpec(specPath)
+	var rs *schema.ResourceSchema
+	if finalResourceType != "" {
+		loaded, err := bicepdata.LoadResource(ctx, finalResourceType, apiVersion, includePreview, nil)
 		if err != nil {
-			return fmt.Errorf("failed to load spec: %w", err)
+			return fmt.Errorf("failed to load resource: %w", err)
+		}
+		rs, err = schema.ConvertResource(loaded)
+		if err != nil {
+			return fmt.Errorf("failed to convert resource: %w", err)
 		}
 	}
 
-	if err := terraform.GenerateInterfacesFile(finalResourceType, doc, "."); err != nil {
+	if err := terraform.GenerateInterfacesFile(finalResourceType, rs, "."); err != nil {
 		return fmt.Errorf("failed to generate AVM interfaces: %w", err)
 	}
 
