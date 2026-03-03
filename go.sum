@@ -1,3 +1,5 @@
+github.com/Azure/bicep-types/src/bicep-types-go v0.0.0-20260301202231-807984d1723c h1:P7xvj+osmgBAMYV6+6y14KdPeL8t3O6RftFCZtP9BRc=
+github.com/Azure/bicep-types/src/bicep-types-go v0.0.0-20260301202231-807984d1723c/go.mod h1:Bk9rIa7p8ROWO4hK+qs5RacRf6tbU8/divPJ7PMUsyI=
 github.com/agext/levenshtein v1.2.2 h1:0S/Yg6LYmFJ5stwQeRp6EeOcCbj7xiqQSdNelsXvaqE=
 github.com/agext/levenshtein v1.2.2/go.mod h1:JEDfjyjHDjOF/1e4FlBE/PkbqA9OfWu2ki2W0IB5558=
 github.com/apparentlymart/go-textseg/v15 v15.0.0 h1:uYvfpb3DyLSCGWnctWKGj857c6ew1u1fNQOlOtuGxQY=
