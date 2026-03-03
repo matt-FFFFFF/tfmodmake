@@ -2,53 +2,47 @@ package terraform
 
 import (
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 
-	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
 	"github.com/matt-FFFFFF/tfmodmake/naming"
-	"github.com/matt-FFFFFF/tfmodmake/openapi"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/zclconf/go-cty/cty"
 )
 
-func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, supportsIdentity bool, secrets []secretField, nameSchema *openapi3.Schema, caps openapi.InterfaceCapabilities, moduleNamePrefix string) (*hclwrite.File, error) {
+func buildVariables(rs *schema.ResourceSchema, supportsTags, supportsLocation, supportsIdentity bool, secrets []secretField, caps InterfaceCapabilities, moduleNamePrefix string) (*hclwrite.File, error) {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
-	arrayItemsContainSecret := func(schema *openapi3.Schema) (bool, error) {
-		if schema == nil || schema.Type == nil {
-			return false, nil
+	arrayItemsContainSecret := func(prop *schema.Property) bool {
+		if prop == nil {
+			return false
 		}
-		if !slices.Contains(*schema.Type, "array") {
-			return false, nil
+		if prop.Type != schema.TypeArray {
+			return false
 		}
-		if schema.Items == nil || schema.Items.Value == nil {
-			return false, nil
+		if prop.ItemType == nil {
+			return false
 		}
-		itemSchema := schema.Items.Value
-		if itemSchema.Type == nil || !slices.Contains(*itemSchema.Type, "object") {
-			return false, nil
+		itemProp := prop.ItemType
+		if itemProp.Type != schema.TypeObject {
+			return false
 		}
-		props, err := openapi.GetEffectiveProperties(itemSchema)
-		if err != nil {
-			return false, fmt.Errorf("getting effective properties for array item schema: %w", err)
-		}
-		for _, prop := range props {
-			if prop == nil || prop.Value == nil {
+		for _, child := range itemProp.Children {
+			if child == nil {
 				continue
 			}
-			if !isWritableProperty(prop.Value) {
+			if !isWritableProperty(child) {
 				continue
 			}
-			if isSecretField(prop.Value) {
-				return true, nil
+			if isSecretField(child) {
+				return true
 			}
 		}
-		return false, nil
+		return false
 	}
 
 	appendTFLintIgnoreUnused := func() {
@@ -72,35 +66,35 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 		return varBody
 	}
 
-	appendSchemaVariable := func(tfName, originalName string, propSchema *openapi3.Schema, required []string) (*hclwrite.Body, error) {
-		if propSchema == nil {
+	appendSchemaVariable := func(tfName, originalName string, prop *schema.Property) (*hclwrite.Body, error) {
+		if prop == nil {
 			return nil, nil
 		}
 
-		tfType, err := mapType(propSchema)
+		tfType, err := mapType(prop)
 		if err != nil {
 			return nil, err
 		}
 
-		var nestedDocSchema *openapi3.Schema
-		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") {
+		var nestedDocProp *schema.Property
+		if prop.Type == schema.TypeObject {
 			switch {
-			case len(propSchema.Properties) > 0:
-				nestedDocSchema = propSchema
-			case propSchema.AdditionalProperties.Schema != nil && propSchema.AdditionalProperties.Schema.Value != nil:
-				apSchema := propSchema.AdditionalProperties.Schema.Value
-				if apSchema.Type != nil && slices.Contains(*apSchema.Type, "object") && len(apSchema.Properties) > 0 {
-					nestedDocSchema = apSchema
+			case len(prop.Children) > 0:
+				nestedDocProp = prop
+			case prop.AdditionalProperties != nil:
+				apProp := prop.AdditionalProperties
+				if apProp.Type == schema.TypeObject && len(apProp.Children) > 0 {
+					nestedDocProp = apProp
 				}
 			}
 		}
-		isNestedObject := nestedDocSchema != nil
+		isNestedObject := nestedDocProp != nil
 
 		varBody := appendVariable(tfName, "", tfType)
 
 		if isNestedObject {
 			var sb strings.Builder
-			desc := propSchema.Description
+			desc := prop.Description
 			if desc == "" {
 				if originalName != "" {
 					desc = fmt.Sprintf("The %s of the resource.", originalName)
@@ -111,18 +105,15 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 			sb.WriteString(desc)
 			sb.WriteString("\n\n")
 
-			if nestedDocSchema != propSchema {
+			if nestedDocProp != prop {
 				sb.WriteString("Map values:\n")
 			}
 
-			nested, err := buildNestedDescription(nestedDocSchema, "")
-			if err != nil {
-				return nil, err
-			}
+			nested := buildNestedDescription(nestedDocProp, "")
 			sb.WriteString(nested)
 			hclgen.SetDescriptionAttribute(varBody, sb.String())
 		} else {
-			description := propSchema.Description
+			description := prop.Description
 			if description == "" {
 				if originalName != "" {
 					description = fmt.Sprintf("The %s of the resource.", originalName)
@@ -133,8 +124,7 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 			hclgen.SetDescriptionAttribute(varBody, description)
 		}
 
-		isRequired := slices.Contains(required, originalName)
-		if !isRequired {
+		if !prop.Required {
 			varBody.SetAttributeRaw("default", hclwrite.TokensForIdentifier("null"))
 		}
 
@@ -146,18 +136,14 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 		// If this is an array of objects that contains secret fields in its items,
 		// mark the whole variable as ephemeral. We currently don't generate array-aware
 		// sensitive_body, so this prevents secrets from persisting in state.
-		hasSecrets, err := arrayItemsContainSecret(propSchema)
-		if err != nil {
-			return nil, err
-		}
-		if hasSecrets {
+		if arrayItemsContainSecret(prop) {
 			varBody.SetAttributeValue("ephemeral", cty.True)
 		}
 
 		// Generate validations for this variable
-		generateValidations(varBody, tfName, propSchema, isRequired)
-		if propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") && len(propSchema.Properties) > 0 {
-			if err := generateNestedObjectValidations(varBody, tfName, propSchema); err != nil {
+		generateValidations(varBody, tfName, prop, prop.Required)
+		if prop.Type == schema.TypeObject && len(prop.Children) > 0 {
+			if err := generateNestedObjectValidations(varBody, tfName, prop); err != nil {
 				return nil, err
 			}
 		}
@@ -165,12 +151,7 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 		return varBody, nil
 	}
 
-	nameVarBody := appendVariable("name", "The name of the resource.", hclwrite.TokensForIdentifier("string"))
-	// The resource name constraints usually come from the operation path parameter schema (not the request body schema).
-	// When available, apply them as validations to var.name.
-	if nameSchema != nil {
-		generateValidations(nameVarBody, "name", nameSchema, true)
-	}
+	appendVariable("name", "The name of the resource.", hclwrite.TokensForIdentifier("string"))
 	body.AppendNewline()
 
 	appendVariable("parent_id", "The parent resource ID for this resource.", hclwrite.TokensForIdentifier("string"))
@@ -232,30 +213,18 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 		seenNames[k] = struct{}{}
 	}
 
-	// Get effective properties and required (handling allOf)
+	// Get top-level properties from the resource schema
 	var keys []string
-	var effectiveProps map[string]*openapi3.SchemaRef
-	var effectiveRequired []string
-	if schema != nil {
-		var err error
-		effectiveProps, err = openapi.GetEffectiveProperties(schema)
-		if err != nil {
-			return nil, fmt.Errorf("getting effective properties: %w", err)
-		}
-		effectiveRequired, err = openapi.GetEffectiveRequired(schema)
-		if err != nil {
-			return nil, fmt.Errorf("getting effective required: %w", err)
-		}
-
-		for k := range effectiveProps {
+	if rs != nil {
+		for k := range rs.Properties {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 	}
 
 	for i, name := range keys {
-		prop := effectiveProps[name]
-		if prop == nil || prop.Value == nil {
+		prop := rs.Properties[name]
+		if prop == nil {
 			continue
 		}
 
@@ -271,38 +240,26 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 		if supportsLocation && name == "location" {
 			continue
 		}
-		propSchema := prop.Value
 
 		// Flatten the standard ARM top-level "properties" bag into individual Terraform variables.
 		// This is the default module shape for full-schema generation (no -root), per DESIGN.md.
-		if name == "properties" && propSchema.Type != nil && slices.Contains(*propSchema.Type, "object") {
-			propsSchema := propSchema
-
-			childProps, err := openapi.GetEffectiveProperties(propsSchema)
-			if err != nil {
-				return nil, fmt.Errorf("getting effective properties for root properties bag: %w", err)
-			}
-			childRequired, err := openapi.GetEffectiveRequired(propsSchema)
-			if err != nil {
-				return nil, fmt.Errorf("getting effective required for root properties bag: %w", err)
-			}
-			if len(childProps) == 0 {
+		if name == "properties" && prop.Type == schema.TypeObject {
+			if len(prop.Children) == 0 {
 				continue
 			}
 
 			var childKeys []string
-			for k := range childProps {
+			for k := range prop.Children {
 				childKeys = append(childKeys, k)
 			}
 			sort.Strings(childKeys)
 
 			for _, childName := range childKeys {
-				childRef := childProps[childName]
-				if childRef == nil || childRef.Value == nil {
+				child := prop.Children[childName]
+				if child == nil {
 					continue
 				}
-				childSchema := childRef.Value
-				if !isWritableProperty(childSchema) {
+				if !isWritableProperty(child) {
 					continue
 				}
 
@@ -325,7 +282,7 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 				}
 				seenNames[tfName] = struct{}{}
 
-				if _, err := appendSchemaVariable(tfName, childName, childSchema, childRequired); err != nil {
+				if _, err := appendSchemaVariable(tfName, childName, child); err != nil {
 					return nil, err
 				}
 
@@ -335,7 +292,7 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 			continue
 		}
 
-		if !isWritableProperty(propSchema) {
+		if !isWritableProperty(prop) {
 			continue
 		}
 
@@ -354,7 +311,7 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 			return nil, fmt.Errorf("terraform variable name collision: %q (from %s)", tfName, name)
 		}
 		seenNames[tfName] = struct{}{}
-		if _, err := appendSchemaVariable(tfName, name, propSchema, effectiveRequired); err != nil {
+		if _, err := appendSchemaVariable(tfName, name, prop); err != nil {
 			return nil, err
 		}
 
@@ -376,13 +333,17 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 			secretBlockAdded = true
 		}
 
-		tfType, err := mapType(secret.schema)
+		tfType, err := mapType(secret.prop)
 		if err != nil {
 			return nil, err
 		}
+		description := ""
+		if secret.prop != nil {
+			description = secret.prop.Description
+		}
 		secretVarBody := appendVariable(
 			secret.varName,
-			secret.schema.Description,
+			description,
 			tfType,
 		)
 
@@ -469,55 +430,40 @@ func buildVariables(schema *openapi3.Schema, supportsTags, supportsLocation, sup
 	return file, nil
 }
 
-func generateVariables(schema *openapi3.Schema, supportsTags, supportsLocation, supportsIdentity bool, secrets []secretField, nameSchema *openapi3.Schema, caps openapi.InterfaceCapabilities, moduleNamePrefix string, outputDir string) error {
-	file, err := buildVariables(schema, supportsTags, supportsLocation, supportsIdentity, secrets, nameSchema, caps, moduleNamePrefix)
+func generateVariables(rs *schema.ResourceSchema, supportsTags, supportsLocation, supportsIdentity bool, secrets []secretField, caps InterfaceCapabilities, moduleNamePrefix string, outputDir string) error {
+	file, err := buildVariables(rs, supportsTags, supportsLocation, supportsIdentity, secrets, caps, moduleNamePrefix)
 	if err != nil {
 		return err
 	}
 	return hclgen.WriteFileToDir(outputDir, "variables.tf", file)
 }
 
-func mapType(schema *openapi3.Schema) (hclwrite.Tokens, error) {
-	if schema.Type == nil {
+func mapType(prop *schema.Property) (hclwrite.Tokens, error) {
+	if prop == nil {
 		return hclwrite.TokensForIdentifier("any"), nil
 	}
 
-	types := *schema.Type
-
-	if slices.Contains(types, "string") {
+	switch prop.Type {
+	case schema.TypeString:
 		return hclwrite.TokensForIdentifier("string"), nil
-	}
-	if slices.Contains(types, "integer") || slices.Contains(types, "number") {
+	case schema.TypeInteger:
 		return hclwrite.TokensForIdentifier("number"), nil
-	}
-	if slices.Contains(types, "boolean") {
+	case schema.TypeBoolean:
 		return hclwrite.TokensForIdentifier("bool"), nil
-	}
-	if slices.Contains(types, "array") {
+	case schema.TypeArray:
 		elemType := hclwrite.TokensForIdentifier("any")
-		if schema.Items != nil && schema.Items.Value != nil {
+		if prop.ItemType != nil {
 			var err error
-			elemType, err = mapType(schema.Items.Value)
+			elemType, err = mapType(prop.ItemType)
 			if err != nil {
 				return nil, err
 			}
 		}
 		return hclwrite.TokensForFunctionCall("list", elemType), nil
-	}
-	if slices.Contains(types, "object") {
-		// Get effective properties and required for allOf handling
-		effectiveProps, err := openapi.GetEffectiveProperties(schema)
-		if err != nil {
-			return nil, fmt.Errorf("getting effective properties: %w", err)
-		}
-		effectiveRequired, err := openapi.GetEffectiveRequired(schema)
-		if err != nil {
-			return nil, fmt.Errorf("getting effective required: %w", err)
-		}
-
-		if len(effectiveProps) == 0 {
-			if schema.AdditionalProperties.Schema != nil && schema.AdditionalProperties.Schema.Value != nil {
-				valueType, err := mapType(schema.AdditionalProperties.Schema.Value)
+	case schema.TypeObject:
+		if len(prop.Children) == 0 {
+			if prop.AdditionalProperties != nil {
+				valueType, err := mapType(prop.AdditionalProperties)
 				if err != nil {
 					return nil, err
 				}
@@ -525,35 +471,31 @@ func mapType(schema *openapi3.Schema) (hclwrite.Tokens, error) {
 			}
 			return hclwrite.TokensForFunctionCall("map", hclwrite.TokensForIdentifier("string")), nil
 		}
+
 		var attrs []hclwrite.ObjectAttrTokens
 
 		// Sort properties
 		var keys []string
-		for k := range effectiveProps {
+		for k := range prop.Children {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
 		for _, k := range keys {
-			prop := effectiveProps[k]
-			if prop == nil || prop.Value == nil {
+			child := prop.Children[k]
+			if child == nil {
 				continue
 			}
-			if !isWritableProperty(prop.Value) {
+			if !isWritableProperty(child) {
 				continue
 			}
-			fieldType, err := mapType(prop.Value)
+			fieldType, err := mapType(child)
 			if err != nil {
 				return nil, err
 			}
 
 			// Check if optional
-			isOptional := true
-			if slices.Contains(effectiveRequired, k) {
-				isOptional = false
-			}
-
-			if isOptional {
+			if !child.Required {
 				fieldType = hclwrite.TokensForFunctionCall("optional", fieldType)
 			}
 			attrs = append(attrs, hclwrite.ObjectAttrTokens{
@@ -562,18 +504,16 @@ func mapType(schema *openapi3.Schema) (hclwrite.Tokens, error) {
 			})
 		}
 		return hclwrite.TokensForFunctionCall("object", hclwrite.TokensForObject(attrs)), nil
+	default:
+		return hclwrite.TokensForIdentifier("any"), nil
 	}
-
-	return hclwrite.TokensForIdentifier("any"), nil
 }
 
-func buildNestedDescription(schema *openapi3.Schema, indent string) (string, error) {
+func buildNestedDescription(prop *schema.Property, indent string) string {
 	var sb strings.Builder
 
-	// Get effective properties for allOf handling
-	effectiveProps, err := openapi.GetEffectiveProperties(schema)
-	if err != nil {
-		return "", fmt.Errorf("getting effective properties in buildNestedDescription: %w", err)
+	if prop == nil || len(prop.Children) == 0 {
+		return ""
 	}
 
 	type keyPair struct {
@@ -581,7 +521,7 @@ func buildNestedDescription(schema *openapi3.Schema, indent string) (string, err
 		snake    string
 	}
 	var childKeys []keyPair
-	for k := range effectiveProps {
+	for k := range prop.Children {
 		childKeys = append(childKeys, keyPair{original: k, snake: naming.ToSnakeCase(k)})
 	}
 	sort.Slice(childKeys, func(i, j int) bool {
@@ -590,17 +530,16 @@ func buildNestedDescription(schema *openapi3.Schema, indent string) (string, err
 
 	for _, pair := range childKeys {
 		k := pair.original
-		childProp := effectiveProps[k]
-		if childProp == nil || childProp.Value == nil {
-			continue
-		}
-		val := childProp.Value
-
-		if !isWritableProperty(val) {
+		child := prop.Children[k]
+		if child == nil {
 			continue
 		}
 
-		childDesc := val.Description
+		if !isWritableProperty(child) {
+			continue
+		}
+
+		childDesc := child.Description
 		if childDesc == "" {
 			childDesc = fmt.Sprintf("The %s property.", k)
 		}
@@ -608,25 +547,11 @@ func buildNestedDescription(schema *openapi3.Schema, indent string) (string, err
 
 		sb.WriteString(fmt.Sprintf("%s- `%s` - %s\n", indent, pair.snake, childDesc))
 
-		isNested := false
-		if val.Type != nil {
-			if slices.Contains(*val.Type, "object") {
-				isNested = true
-			}
-		}
-
-		// Check if nested object has properties (considering allOf)
-		nestedProps, err := openapi.GetEffectiveProperties(val)
-		if err != nil {
-			return "", fmt.Errorf("getting effective properties for nested object: %w", err)
-		}
-		if isNested && len(nestedProps) > 0 {
-			nested, err := buildNestedDescription(val, indent+"  ")
-			if err != nil {
-				return "", err
-			}
+		// Check if nested object has children
+		if child.Type == schema.TypeObject && len(child.Children) > 0 {
+			nested := buildNestedDescription(child, indent+"  ")
 			sb.WriteString(nested)
 		}
 	}
-	return sb.String(), nil
+	return sb.String()
 }

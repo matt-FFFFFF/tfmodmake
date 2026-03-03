@@ -4,7 +4,7 @@ import (
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
-	"github.com/matt-FFFFFF/tfmodmake/openapi"
+
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -13,7 +13,7 @@ import (
 // diagnostic_settings, private_endpoints, etc.
 
 // emitCustomerManagedKeyVar generates the customer_managed_key variable if supported.
-func emitCustomerManagedKeyVar(body *hclwrite.Body, caps openapi.InterfaceCapabilities, appendVariable func(string, string, hclwrite.Tokens) *hclwrite.Body, appendTFLintIgnoreUnused func()) {
+func emitCustomerManagedKeyVar(body *hclwrite.Body, caps InterfaceCapabilities, appendVariable func(string, string, hclwrite.Tokens) *hclwrite.Body, appendTFLintIgnoreUnused func()) {
 	if !caps.SupportsCustomerManagedKey {
 		return
 	}
@@ -58,7 +58,7 @@ func emitEnableTelemetryVar(body *hclwrite.Body, appendVariable func(string, str
 }
 
 // emitDiagnosticSettingsVar generates the diagnostic_settings variable with validations if supported.
-func emitDiagnosticSettingsVar(body *hclwrite.Body, caps openapi.InterfaceCapabilities, appendVariable func(string, string, hclwrite.Tokens) *hclwrite.Body) {
+func emitDiagnosticSettingsVar(body *hclwrite.Body, caps InterfaceCapabilities, appendVariable func(string, string, hclwrite.Tokens) *hclwrite.Body) {
 	if !caps.SupportsDiagnostics {
 		return
 	}
@@ -161,7 +161,7 @@ func addDiagnosticSettingsValidations(diagBody *hclwrite.Body) {
 }
 
 // emitPrivateEndpointsVars generates both private_endpoints and private_endpoints_manage_dns_zone_group variables if supported.
-func emitPrivateEndpointsVars(body *hclwrite.Body, caps openapi.InterfaceCapabilities, appendVariable func(string, string, hclwrite.Tokens) *hclwrite.Body) {
+func emitPrivateEndpointsVars(body *hclwrite.Body, caps InterfaceCapabilities, appendVariable func(string, string, hclwrite.Tokens) *hclwrite.Body) {
 	if !caps.SupportsPrivateEndpoints {
 		return
 	}

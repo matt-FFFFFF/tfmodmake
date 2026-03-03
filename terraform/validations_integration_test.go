@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -21,98 +21,25 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	maxLen := uint64(100)
-	maxItems := uint64(5)
-	min := float64(1)
-	max := float64(1000)
-
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"location": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"string"},
-				},
-			},
-			"properties": {
-				Value: &openapi3.Schema{
-					Type:     &openapi3.Types{"object"},
-					Required: []string{"sku"},
-					Properties: map[string]*openapi3.SchemaRef{
-						// Enum with allOf (simulating Azure patterns)
-						"sku": {
-							Value: &openapi3.Schema{
-								AllOf: []*openapi3.SchemaRef{
-									{
-										Value: &openapi3.Schema{
-											Type: &openapi3.Types{"string"},
-										},
-									},
-									{
-										Value: &openapi3.Schema{
-											Enum: []any{"Free", "Basic", "Standard", "Premium"},
-										},
-									},
-								},
-							},
-						},
-						// String with min/max length
-						"resourceName": {
-							Value: &openapi3.Schema{
-								Type:      &openapi3.Types{"string"},
-								MinLength: 3,
-								MaxLength: &maxLen,
-							},
-						},
-						// UUID format
-						"correlationId": {
-							Value: &openapi3.Schema{
-								Type:   &openapi3.Types{"string"},
-								Format: "uuid",
-							},
-						},
-						// Array with constraints
-						"allowedIpRanges": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"array"},
-								MinItems:    1,
-								MaxItems:    &maxItems,
-								UniqueItems: true,
-								Items: &openapi3.SchemaRef{
-									Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-								},
-							},
-						},
-						// Number with min/max
-						"capacity": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"integer"},
-								Min:  &min,
-								Max:  &max,
-							},
-						},
-						// Enum via x-ms-enum
-						"tier": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"string"},
-								Extensions: map[string]any{
-									"x-ms-enum": map[string]any{
-										"name": "TierLevel",
-										"values": []any{
-											map[string]any{"value": "Development"},
-											map[string]any{"value": "Production"},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"location": {Name: "location", Type: schema.TypeString},
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				// Enum (required field)
+				"sku": {Name: "sku", Type: schema.TypeString, Required: true, Enum: []string{"Free", "Basic", "Standard", "Premium"}},
+				// String with min/max length
+				"resourceName": {Name: "resourceName", Type: schema.TypeString, Constraints: schema.Constraints{MinLength: int64Ptr(3), MaxLength: int64Ptr(100)}},
+				// Array with constraints
+				"allowedIpRanges": {Name: "allowedIpRanges", Type: schema.TypeArray, ItemType: &schema.Property{Type: schema.TypeString}, Constraints: schema.Constraints{MinItems: int64Ptr(1), MaxItems: int64Ptr(5)}},
+				// Number with min/max
+				"capacity": {Name: "capacity", Type: schema.TypeInteger, Constraints: schema.Constraints{MinValue: int64Ptr(1), MaxValue: int64Ptr(1000)}},
+				// Enum (optional field)
+				"tier": {Name: "tier", Type: schema.TypeString, Enum: []string{"Development", "Production"}},
+			}},
 		},
 	}
 
-	err = Generate("Microsoft.Test/comprehensive", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("Microsoft.Test/comprehensive", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	// Read and verify the generated file
@@ -132,17 +59,10 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 	assert.Contains(t, varsContent, "minimum length of 3")
 	assert.Contains(t, varsContent, "maximum length of 100")
 
-	// Verify correlation_id UUID validation
-	assert.Contains(t, varsContent, `variable "correlation_id"`)
-	assert.Contains(t, varsContent, "can(regex(")
-	assert.Contains(t, varsContent, "valid UUID")
-
 	// Verify allowed_ip_ranges array validations
 	assert.Contains(t, varsContent, `variable "allowed_ip_ranges"`)
 	assert.Regexp(t, `length\(var\.allowed_ip_ranges\)\s+>=\s+1`, varsContent)
 	assert.Regexp(t, `length\(var\.allowed_ip_ranges\)\s+<=\s+5`, varsContent)
-	assert.Regexp(t, `length\(distinct\(var\.allowed_ip_ranges\)\)\s+==\s+length\(var\.allowed_ip_ranges\)`, varsContent)
-	assert.Contains(t, varsContent, "unique items")
 
 	// Verify capacity numeric validations
 	assert.Contains(t, varsContent, `variable "capacity"`)
@@ -151,12 +71,12 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 	assert.Contains(t, varsContent, "greater than or equal to 1")
 	assert.Contains(t, varsContent, "less than or equal to 1000")
 
-	// Verify tier x-ms-enum validation (sorted)
+	// Verify tier enum validation (sorted)
 	assert.Contains(t, varsContent, `variable "tier"`)
 	assert.Contains(t, varsContent, `contains(["Development", "Production"], var.tier)`)
 
 	// Verify null-safety for optional fields
-	optionalVars := []string{"resource_name", "correlation_id", "allowed_ip_ranges", "capacity", "tier"}
+	optionalVars := []string{"resource_name", "allowed_ip_ranges", "capacity", "tier"}
 	for _, varName := range optionalVars {
 		// Each optional variable should have at least one validation with null check (allowing extra spaces)
 		varBlock := extractVariableBlock(t, varsContent, varName)
@@ -174,15 +94,11 @@ func TestIntegration_ComprehensiveValidations(t *testing.T) {
 	// Expected:
 	// - sku: 1 (enum)
 	// - resource_name: 2 (min, max)
-	// - correlation_id: 1 (uuid)
-	// - allowed_ip_ranges: 3 (min, max, unique)
+	// - allowed_ip_ranges: 2 (min, max)
 	// - capacity: 2 (min, max)
-	// - tier: 1 (x-ms-enum)
-	// Total: 10
-	// Note: AVM interface variables (diagnostic_settings, private_endpoints, etc.) are only generated
-	// when capabilities are detected from the OpenAPI spec, which requires a non-nil spec parameter.
-	// This test passes nil for spec, so no interface variables are generated.
-	assert.Equal(t, 10, validationCount, "Should have 10 validation blocks")
+	// - tier: 1 (enum)
+	// Total: 8
+	assert.Equal(t, 8, validationCount, "Should have 8 validation blocks")
 
 	t.Logf("Generated %d validation blocks", validationCount)
 }

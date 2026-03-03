@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
 	"github.com/matt-FFFFFF/tfmodmake/naming"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/zclconf/go-cty/cty"
 )
 
 // generateOutputs creates the outputs.tf file with AVM-compliant outputs.
 // Always includes the mandatory AVM outputs: resource_id and name.
 // Also includes outputs for computed/readOnly exported attributes when schema is available.
-func buildOutputs(schema *openapi3.Schema) *hclwrite.File {
+func buildOutputs(rs *schema.ResourceSchema) *hclwrite.File {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -32,8 +32,8 @@ func buildOutputs(schema *openapi3.Schema) *hclwrite.File {
 	nameBody.SetAttributeRaw("value", hclgen.TokensForTraversal("azapi_resource", "this", "name"))
 	body.AppendNewline()
 
-	if schema != nil {
-		exportPaths := extractComputedPaths(schema)
+	if rs != nil {
+		exportPaths := extractComputedPaths(rs)
 		usedNames := make(map[string]int)
 		for _, exportPath := range exportPaths {
 			outputName := outputNameForExportPath(exportPath)
@@ -51,10 +51,10 @@ func buildOutputs(schema *openapi3.Schema) *hclwrite.File {
 			out := body.AppendNewBlock("output", []string{outputName})
 			outBody := out.Body()
 			desc := "Computed value exported from the Azure API response."
-			propSchema := schemaForExportPath(schema, exportPath)
-			if propSchema != nil {
-				if strings.TrimSpace(propSchema.Description) != "" {
-					desc = strings.TrimSpace(propSchema.Description)
+			propForPath := propertyForExportPath(rs, exportPath)
+			if propForPath != nil {
+				if strings.TrimSpace(propForPath.Description) != "" {
+					desc = strings.TrimSpace(propForPath.Description)
 				}
 			}
 			outBody.SetAttributeValue("description", cty.StringVal(desc))
@@ -64,7 +64,7 @@ func buildOutputs(schema *openapi3.Schema) *hclwrite.File {
 			valueParts = append(valueParts, "azapi_resource", "this", "output")
 			valueParts = append(valueParts, segments...)
 			expr := hclgen.TokensForTraversalOrIndex(valueParts...)
-			outBody.SetAttributeRaw("value", hclwrite.TokensForFunctionCall("try", expr, defaultTokensForSchema(propSchema)))
+			outBody.SetAttributeRaw("value", hclwrite.TokensForFunctionCall("try", expr, defaultTokensForProperty(propForPath)))
 			body.AppendNewline()
 		}
 	}
@@ -72,12 +72,14 @@ func buildOutputs(schema *openapi3.Schema) *hclwrite.File {
 	return file
 }
 
-func generateOutputs(schema *openapi3.Schema, outputDir string) error {
-	return hclgen.WriteFileToDir(outputDir, "outputs.tf", buildOutputs(schema))
+func generateOutputs(rs *schema.ResourceSchema, outputDir string) error {
+	return hclgen.WriteFileToDir(outputDir, "outputs.tf", buildOutputs(rs))
 }
 
-func schemaForExportPath(schema *openapi3.Schema, exportPath string) *openapi3.Schema {
-	if schema == nil {
+// propertyForExportPath navigates the resource schema's property tree
+// following a dot-separated export path.
+func propertyForExportPath(rs *schema.ResourceSchema, exportPath string) *schema.Property {
+	if rs == nil {
 		return nil
 	}
 	exportPath = strings.TrimSpace(exportPath)
@@ -85,34 +87,28 @@ func schemaForExportPath(schema *openapi3.Schema, exportPath string) *openapi3.S
 		return nil
 	}
 	segments := strings.Split(exportPath, ".")
-	return schemaForPathRecursive(schema, segments, make(map[*openapi3.Schema]struct{}))
+	return propertyForPathRecursive(rs.Properties, segments)
 }
 
-func schemaForPathRecursive(schema *openapi3.Schema, segments []string, visited map[*openapi3.Schema]struct{}) *openapi3.Schema {
-	if schema == nil || len(segments) == 0 {
+// propertyForPathRecursive walks through nested properties following path segments.
+func propertyForPathRecursive(props map[string]*schema.Property, segments []string) *schema.Property {
+	if len(props) == 0 || len(segments) == 0 {
 		return nil
 	}
-	if _, seen := visited[schema]; seen {
-		return nil
-	}
-	visited[schema] = struct{}{}
-	defer delete(visited, schema)
 
 	propName := segments[0]
-	if propRef, ok := schema.Properties[propName]; ok && propRef != nil && propRef.Value != nil {
-		if len(segments) == 1 {
-			return propRef.Value
-		}
-		if found := schemaForPathRecursive(propRef.Value, segments[1:], visited); found != nil {
-			return found
-		}
+	prop, ok := props[propName]
+	if !ok || prop == nil {
+		return nil
 	}
 
-	for _, ref := range schema.AllOf {
-		if ref == nil || ref.Value == nil {
-			continue
-		}
-		if found := schemaForPathRecursive(ref.Value, segments, visited); found != nil {
+	if len(segments) == 1 {
+		return prop
+	}
+
+	// Navigate into children
+	if prop.Children != nil {
+		if found := propertyForPathRecursive(prop.Children, segments[1:]); found != nil {
 			return found
 		}
 	}
@@ -120,21 +116,20 @@ func schemaForPathRecursive(schema *openapi3.Schema, segments []string, visited 
 	return nil
 }
 
-func defaultTokensForSchema(schema *openapi3.Schema) hclwrite.Tokens {
-	if schema == nil || schema.Type == nil {
+// defaultTokensForProperty returns the default fallback value tokens for a property type.
+func defaultTokensForProperty(prop *schema.Property) hclwrite.Tokens {
+	if prop == nil {
 		return hclwrite.TokensForIdentifier("null")
 	}
 
-	for _, typ := range *schema.Type {
-		if typ == "array" {
-			return hclwrite.TokensForValue(cty.ListValEmpty(cty.DynamicPseudoType))
-		}
-		if typ == "object" {
-			return hclwrite.TokensForValue(cty.EmptyObjectVal)
-		}
+	switch prop.Type {
+	case schema.TypeArray:
+		return hclwrite.TokensForValue(cty.ListValEmpty(cty.DynamicPseudoType))
+	case schema.TypeObject:
+		return hclwrite.TokensForValue(cty.EmptyObjectVal)
+	default:
+		return hclwrite.TokensForIdentifier("null")
 	}
-
-	return hclwrite.TokensForIdentifier("null")
 }
 
 func outputNameForExportPath(path string) string {

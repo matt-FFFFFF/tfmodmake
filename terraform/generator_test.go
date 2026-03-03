@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/naming"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zclconf/go-cty/cty"
@@ -54,41 +54,19 @@ func TestGenerate(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"location": {
-				Value: &openapi3.Schema{
-					Type:        &openapi3.Types{"string"},
-					Description: "Resource location",
-				},
-			},
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"readOnlyProp": {
-							Value: &openapi3.Schema{
-								Type:     &openapi3.Types{"string"},
-								ReadOnly: true,
-							},
-						},
-						"writableProp": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"string"},
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		SupportsLocation: true,
+		Properties: map[string]*schema.Property{
+			"location": {Name: "location", Type: schema.TypeString, Description: "Resource location"},
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"readOnlyProp": {Name: "readOnlyProp", Type: schema.TypeString, ReadOnly: true},
+				"writableProp": {Name: "writableProp", Type: schema.TypeString},
+			}},
 		},
 	}
 
-	supportsTags := SupportsTags(schema)
-	supportsLocation := SupportsLocation(schema)
-
 	apiVersion := "2024-01-01"
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion(apiVersion), WithSupportsTags(supportsTags), WithSupportsLocation(supportsLocation))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion(apiVersion))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -147,70 +125,6 @@ func TestGenerate(t *testing.T) {
 	assert.Equal(t, "try(azapi_resource.this.output.properties.readOnlyProp, null)", expressionString(t, readOnlyOutput.Body.Attributes["value"].Expr))
 }
 
-func TestGenerate_NameVariable_UsesNameSchemaValidations(t *testing.T) {
-	tmpDir := t.TempDir()
-
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
-	maxLen := uint64(63)
-	nameSchema := &openapi3.Schema{
-		Type:      &openapi3.Types{"string"},
-		MinLength: 1,
-		MaxLength: &maxLen,
-		Pattern:   "^[a-z0-9-]{1,63}$",
-	}
-
-	doc := &openapi3.T{
-		Paths: openapi3.NewPaths(),
-	}
-	doc.Paths.Set("/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Test/testResource/{name}", &openapi3.PathItem{
-		Put: &openapi3.Operation{
-			Parameters: openapi3.Parameters{
-				{
-					Value: &openapi3.Parameter{
-						Name: "name",
-						In:   "path",
-						Schema: &openapi3.SchemaRef{
-							Value: nameSchema,
-						},
-					},
-				},
-			},
-		},
-	})
-
-	err = Generate("Microsoft.Test/testResource", WithSchema(nil), WithLocalName("unused_local"), WithAPIVersion("2024-01-01"), WithSpec(doc))
-	require.NoError(t, err)
-
-	varsBody := parseHCLBody(t, "variables.tf")
-	nameVar := requireBlock(t, varsBody, "variable", "name")
-
-	var validations []*hclsyntax.Block
-	for _, b := range nameVar.Body.Blocks {
-		if b.Type == "validation" {
-			validations = append(validations, b)
-		}
-	}
-	require.GreaterOrEqual(t, len(validations), 3)
-
-	var conditions []string
-	for _, b := range validations {
-		condAttr := b.Body.Attributes["condition"]
-		require.NotNil(t, condAttr)
-		conditions = append(conditions, expressionString(t, condAttr.Expr))
-	}
-	joined := strings.Join(conditions, "\n")
-
-	assert.Contains(t, joined, "length(var.name) >= 1")
-	assert.Contains(t, joined, "length(var.name) <= 63")
-	assert.Contains(t, joined, "can(regex(\"^[a-z0-9-]{1,63}$\", var.name))")
-}
-
 func TestGenerate_NestedObjectValidations(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -221,45 +135,31 @@ func TestGenerate_NestedObjectValidations(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	maxUsernameLength := uint64(20)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"windowsProfile": {
-							Value: &openapi3.Schema{
-								Type:     &openapi3.Types{"object"},
-								Required: []string{"adminUsername"},
-								Properties: map[string]*openapi3.SchemaRef{
-									"adminUsername": {
-										Value: &openapi3.Schema{
-											Type:      &openapi3.Types{"string"},
-											MinLength: 1,
-											MaxLength: &maxUsernameLength,
-										},
-									},
-									"licenseType": {
-										Value: &openapi3.Schema{
-											Type: &openapi3.Types{"string"},
-											Enum: []any{"None", "Windows_Server"},
-										},
-									},
-								},
-							},
+	maxUsernameLength := int64(20)
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"windowsProfile": {Name: "windowsProfile", Type: schema.TypeObject, Children: map[string]*schema.Property{
+					"adminUsername": {
+						Name:     "adminUsername",
+						Type:     schema.TypeString,
+						Required: true,
+						Constraints: schema.Constraints{
+							MinLength: ptrInt64(1),
+							MaxLength: &maxUsernameLength,
 						},
 					},
-				},
-			},
+					"licenseType": {
+						Name: "licenseType",
+						Type: schema.TypeString,
+						Enum: []string{"None", "Windows_Server"},
+					},
+				}},
+			}},
 		},
 	}
 
-	supportsTags := SupportsTags(schema)
-	supportsLocation := SupportsLocation(schema)
-
-	err = Generate("Microsoft.Test/testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"), WithSupportsTags(supportsTags), WithSupportsLocation(supportsLocation))
+	err = Generate("Microsoft.Test/testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -298,34 +198,19 @@ func TestGenerate_QuotesNonIdentifierObjectKeysInLocals(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"autoScalerProfile": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"object"},
-								Properties: map[string]*openapi3.SchemaRef{
-									"balance-similar-node-groups": {
-										Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-									},
-									"foo.bar": {
-										Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"autoScalerProfile": {Name: "autoScalerProfile", Type: schema.TypeObject, Children: map[string]*schema.Property{
+					"balance-similar-node-groups": {Name: "balance-similar-node-groups", Type: schema.TypeString},
+					"foo.bar":                     {Name: "foo.bar", Type: schema.TypeString},
+				}},
+			}},
 		},
 	}
 
 	apiVersion := "2025-10-01"
-	err = Generate("Microsoft.ContainerService/managedClusters", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion(apiVersion))
+	err = Generate("Microsoft.ContainerService/managedClusters", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion(apiVersion))
 	require.NoError(t, err)
 
 	localsBytes, err := os.ReadFile("locals.tf")
@@ -352,43 +237,20 @@ func TestGenerate_SkipsSecretsByFullPathNotLeafName(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"a": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"object"},
-								Properties: map[string]*openapi3.SchemaRef{
-									"password": {
-										Value: &openapi3.Schema{
-											Type:       &openapi3.Types{"string"},
-											Extensions: map[string]any{"x-ms-secret": true},
-										},
-									},
-								},
-							},
-						},
-						"b": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"object"},
-								Properties: map[string]*openapi3.SchemaRef{
-									"password": {
-										Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"a": {Name: "a", Type: schema.TypeObject, Children: map[string]*schema.Property{
+					"password": {Name: "password", Type: schema.TypeString, Sensitive: true},
+				}},
+				"b": {Name: "b", Type: schema.TypeObject, Children: map[string]*schema.Property{
+					"password": {Name: "password", Type: schema.TypeString},
+				}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2025-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2025-01-01"))
 	require.NoError(t, err)
 
 	localsBytes, err := os.ReadFile("locals.tf")
@@ -410,29 +272,18 @@ func TestGenerate_DefaultOptions(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"optionalString": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
-						"optionalObj": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"object"},
-								Properties: map[string]*openapi3.SchemaRef{
-									"nestedOptional": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
-								},
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"optionalString": {Name: "optionalString", Type: schema.TypeString},
+				"optionalObj": {Name: "optionalObj", Type: schema.TypeObject, Children: map[string]*schema.Property{
+					"nestedOptional": {Name: "nestedOptional", Type: schema.TypeString},
+				}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2025-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2025-01-01"))
 	require.NoError(t, err)
 
 	mainBytes, err := os.ReadFile("main.tf")
@@ -452,22 +303,16 @@ func TestGenerate_FailsOnFlattenedPropertiesNameCollision(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						// This would collide with the built-in top-level var "name".
-						"name": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				// This would collide with the built-in top-level var "name".
+				"name": {Name: "name", Type: schema.TypeString},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2025-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2025-01-01"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "collision")
 }
@@ -482,30 +327,21 @@ func TestGenerate_DoesNotDuplicateSecretVarsFromFlattenedProperties(t *testing.T
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	secretSchema := &openapi3.Schema{
-		Type:        &openapi3.Types{"string"},
-		Description: "A secret string",
-		Extensions: map[string]any{
-			"x-ms-secret": true,
-		},
-	}
-
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"daprAIConnectionString": {Value: secretSchema},
-						"writableProp":           {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
-					},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"daprAIConnectionString": {
+					Name:        "daprAIConnectionString",
+					Type:        schema.TypeString,
+					Description: "A secret string",
+					Sensitive:   true,
 				},
-			},
+				"writableProp": {Name: "writableProp", Type: schema.TypeString},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2025-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2025-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -548,32 +384,24 @@ func TestGenerate_IncludesAdditionalPropertiesDescription(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
 			"kubeDnsOverrides": {
-				Value: &openapi3.Schema{
-					Type:        &openapi3.Types{"object"},
-					Description: "Overrides for kube DNS queries.",
-					AdditionalProperties: openapi3.AdditionalProperties{
-						Schema: &openapi3.SchemaRef{
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"object"},
-								Properties: map[string]*openapi3.SchemaRef{
-									"queryLogging": {
-										Value: &openapi3.Schema{
-											Type:        &openapi3.Types{"string"},
-											Description: "Enable query logging.",
-										},
-									},
-									"maxConcurrent": {
-										Value: &openapi3.Schema{
-											Type:        &openapi3.Types{"integer"},
-											Description: "Maximum concurrent queries.",
-										},
-									},
-								},
-							},
+				Name:        "kubeDnsOverrides",
+				Type:        schema.TypeObject,
+				Description: "Overrides for kube DNS queries.",
+				AdditionalProperties: &schema.Property{
+					Type: schema.TypeObject,
+					Children: map[string]*schema.Property{
+						"queryLogging": {
+							Name:        "queryLogging",
+							Type:        schema.TypeString,
+							Description: "Enable query logging.",
+						},
+						"maxConcurrent": {
+							Name:        "maxConcurrent",
+							Type:        schema.TypeInteger,
+							Description: "Maximum concurrent queries.",
 						},
 					},
 				},
@@ -581,9 +409,7 @@ func TestGenerate_IncludesAdditionalPropertiesDescription(t *testing.T) {
 		},
 	}
 
-	supportsLocation := SupportsLocation(schema)
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("local_map"), WithSupportsLocation(supportsLocation))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("local_map"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -605,26 +431,22 @@ func TestGenerate_WithTagsSupport(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"location": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
+	rs := &schema.ResourceSchema{
+		SupportsTags:     true,
+		SupportsLocation: true,
+		Properties: map[string]*schema.Property{
+			"location": {Name: "location", Type: schema.TypeString},
 			"tags": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					AdditionalProperties: openapi3.AdditionalProperties{
-						Schema: &openapi3.SchemaRef{
-							Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-						},
-					},
+				Name: "tags",
+				Type: schema.TypeObject,
+				AdditionalProperties: &schema.Property{
+					Type: schema.TypeString,
 				},
 			},
 		},
 	}
 
-	supportsLocation := SupportsLocation(schema)
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithSupportsTags(true), WithSupportsLocation(supportsLocation))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -648,21 +470,14 @@ func TestGenerate_UsesPlaceholderWhenVersionMissing(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"location": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"string"},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		SupportsLocation: true,
+		Properties: map[string]*schema.Property{
+			"location": {Name: "location", Type: schema.TypeString},
 		},
 	}
 
-	supportsTags := SupportsTags(schema)
-	supportsLocation := SupportsLocation(schema)
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("placeholder_local"), WithSupportsTags(supportsTags), WithSupportsLocation(supportsLocation))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("placeholder_local"))
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")
@@ -680,7 +495,7 @@ func TestGenerate_WithNilSchemaSetsEmptyBody(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	err = Generate("testResource", WithSchema(nil), WithLocalName("unused_local"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithLocalName("unused_local"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -698,59 +513,52 @@ func TestGenerate_WithNilSchemaSetsEmptyBody(t *testing.T) {
 
 func TestMapType(t *testing.T) {
 	tests := []struct {
-		name   string
-		schema *openapi3.Schema
-		want   string
+		name string
+		prop *schema.Property
+		want string
 	}{
 		{
-			name:   "string",
-			schema: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-			want:   "string",
+			name: "string",
+			prop: &schema.Property{Type: schema.TypeString},
+			want: "string",
 		},
 		{
-			name:   "integer",
-			schema: &openapi3.Schema{Type: &openapi3.Types{"integer"}},
-			want:   "number",
+			name: "integer",
+			prop: &schema.Property{Type: schema.TypeInteger},
+			want: "number",
 		},
 		{
-			name:   "boolean",
-			schema: &openapi3.Schema{Type: &openapi3.Types{"boolean"}},
-			want:   "bool",
+			name: "boolean",
+			prop: &schema.Property{Type: schema.TypeBoolean},
+			want: "bool",
 		},
 		{
 			name: "array of strings",
-			schema: &openapi3.Schema{
-				Type: &openapi3.Types{"array"},
-				Items: &openapi3.SchemaRef{
-					Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-				},
+			prop: &schema.Property{
+				Type:     schema.TypeArray,
+				ItemType: &schema.Property{Type: schema.TypeString},
 			},
 			want: "list(string)",
 		},
 		{
 			name: "object",
-			schema: &openapi3.Schema{
-				Type: &openapi3.Types{"object"},
-				Properties: map[string]*openapi3.SchemaRef{
-					"prop1": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
+			prop: &schema.Property{
+				Type: schema.TypeObject,
+				Children: map[string]*schema.Property{
+					"prop1": {Name: "prop1", Type: schema.TypeString},
 				},
 			},
 			want: "object({\n  prop1 = optional(string)\n})",
 		},
 		{
 			name: "object with additionalProperties object",
-			schema: &openapi3.Schema{
-				Type: &openapi3.Types{"object"},
-				AdditionalProperties: openapi3.AdditionalProperties{
-					Schema: &openapi3.SchemaRef{
-						Value: &openapi3.Schema{
-							Type:     &openapi3.Types{"object"},
-							Required: []string{"queryLogging"},
-							Properties: map[string]*openapi3.SchemaRef{
-								"queryLogging":  {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
-								"maxConcurrent": {Value: &openapi3.Schema{Type: &openapi3.Types{"integer"}}},
-							},
-						},
+			prop: &schema.Property{
+				Type: schema.TypeObject,
+				AdditionalProperties: &schema.Property{
+					Type: schema.TypeObject,
+					Children: map[string]*schema.Property{
+						"queryLogging":  {Name: "queryLogging", Type: schema.TypeString, Required: true},
+						"maxConcurrent": {Name: "maxConcurrent", Type: schema.TypeInteger},
 					},
 				},
 			},
@@ -760,7 +568,7 @@ func TestMapType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotTokens, err := mapType(tt.schema)
+			gotTokens, err := mapType(tt.prop)
 			require.NoError(t, err)
 			got := string(gotTokens.Bytes())
 			assert.Equal(t, tt.want, got)
@@ -769,49 +577,35 @@ func TestMapType(t *testing.T) {
 }
 
 func TestBuildNestedDescription(t *testing.T) {
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"prop1": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}, Description: "Description 1"}},
+	prop := &schema.Property{
+		Type: schema.TypeObject,
+		Children: map[string]*schema.Property{
+			"prop1": {Name: "prop1", Type: schema.TypeString, Description: "Description 1"},
 			"nested": {
-				Value: &openapi3.Schema{
-					Type:        &openapi3.Types{"object"},
-					Description: "Nested object",
-					Properties: map[string]*openapi3.SchemaRef{
-						"child": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}, Description: "Child description"}},
-					},
+				Name:        "nested",
+				Type:        schema.TypeObject,
+				Description: "Nested object",
+				Children: map[string]*schema.Property{
+					"child": {Name: "child", Type: schema.TypeString, Description: "Child description"},
 				},
 			},
 		},
 	}
 
-	got, err := buildNestedDescription(schema, "")
-	require.NoError(t, err)
+	got := buildNestedDescription(prop, "")
 	assert.Contains(t, got, "- `prop1` - Description 1")
 	assert.Contains(t, got, "- `nested` - Nested object")
 	assert.Contains(t, got, "  - `child` - Child description")
 }
 
 func TestConstructValue_MapAdditionalPropertiesObject(t *testing.T) {
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		AdditionalProperties: openapi3.AdditionalProperties{
-			Schema: &openapi3.SchemaRef{
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"queryLogging": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"string"},
-							},
-						},
-						"maxConcurrent": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"integer"},
-							},
-						},
-					},
-				},
+	prop := &schema.Property{
+		Type: schema.TypeObject,
+		AdditionalProperties: &schema.Property{
+			Type: schema.TypeObject,
+			Children: map[string]*schema.Property{
+				"queryLogging":  {Name: "queryLogging", Type: schema.TypeString},
+				"maxConcurrent": {Name: "maxConcurrent", Type: schema.TypeInteger},
 			},
 		},
 	}
@@ -821,7 +615,7 @@ func TestConstructValue_MapAdditionalPropertiesObject(t *testing.T) {
 		{Type: hclsyntax.TokenDot, Bytes: []byte(".")},
 		{Type: hclsyntax.TokenIdent, Bytes: []byte("kube_dns_overrides")},
 	}
-	tokens, err := constructValue(schema, accessPath, false, nil, "", false, "")
+	tokens, err := constructValue(prop, accessPath, false, nil, "", false, "")
 	require.NoError(t, err)
 
 	f := hclwrite.NewEmptyFile()
@@ -841,77 +635,6 @@ func TestConstructValue_MapAdditionalPropertiesObject(t *testing.T) {
 	assert.Equal(t, expected, string(resultTokens.Bytes()))
 }
 
-func parseHCLBody(t *testing.T, path string) *hclsyntax.Body {
-	t.Helper()
-
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-
-	file, diags := hclsyntax.ParseConfig(data, path, hcl.InitialPos)
-	require.False(t, diags.HasErrors(), diags.Error())
-
-	body, ok := file.Body.(*hclsyntax.Body)
-	require.True(t, ok, "expected hclsyntax.Body")
-
-	return body
-}
-
-func findBlock(body *hclsyntax.Body, typ string, labels ...string) *hclsyntax.Block {
-	for _, block := range body.Blocks {
-		if block.Type != typ {
-			continue
-		}
-		if len(labels) == 0 && len(block.Labels) == 0 {
-			return block
-		}
-		if len(block.Labels) != len(labels) {
-			continue
-		}
-		match := true
-		for i, l := range labels {
-			if block.Labels[i] != l {
-				match = false
-				break
-			}
-		}
-		if match {
-			return block
-		}
-	}
-	return nil
-}
-
-func requireBlock(t *testing.T, body *hclsyntax.Body, typ string, labels ...string) *hclsyntax.Block {
-	t.Helper()
-	block := findBlock(body, typ, labels...)
-	require.NotNil(t, block, "expected block %s %v", typ, labels)
-	return block
-}
-
-func attributeStringValue(t *testing.T, attr *hclsyntax.Attribute) string {
-	t.Helper()
-	require.NotNil(t, attr)
-	val, diags := attr.Expr.Value(nil)
-	require.False(t, diags.HasErrors(), diags.Error())
-	require.True(t, val.Type().Equals(cty.String), "expected string value, got %s", val.Type().FriendlyName())
-	return val.AsString()
-}
-
-func expressionString(t *testing.T, expr hcl.Expression) string {
-	t.Helper()
-
-	rng := expr.Range()
-	data, err := os.ReadFile(rng.Filename)
-	require.NoError(t, err)
-
-	require.LessOrEqual(t, rng.End.Byte, len(data), "expression end out of range")
-	require.LessOrEqual(t, rng.Start.Byte, rng.End.Byte, "expression range invalid")
-
-	exprSrc := data[rng.Start.Byte:rng.End.Byte]
-	formatted := hclwrite.Format(exprSrc)
-	return strings.TrimSpace(string(formatted))
-}
-
 func TestGenerate_WithSecretFields(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -922,45 +645,31 @@ func TestGenerate_WithSecretFields(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	// Create a schema with a secret field marked with x-ms-secret extension
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"normalField": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								Description: "A normal field",
-							},
-						},
-						"connectionString": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								Description: "Application Insights connection string",
-								Extensions: map[string]any{
-									"x-ms-secret": true,
-								},
-							},
-						},
-						"apiKey": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								Description: "The API key",
-								Extensions: map[string]any{
-									"x-ms-secret": true,
-								},
-							},
-						},
-					},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"normalField": {
+					Name:        "normalField",
+					Type:        schema.TypeString,
+					Description: "A normal field",
 				},
-			},
+				"connectionString": {
+					Name:        "connectionString",
+					Type:        schema.TypeString,
+					Description: "Application Insights connection string",
+					Sensitive:   true,
+				},
+				"apiKey": {
+					Name:        "apiKey",
+					Type:        schema.TypeString,
+					Description: "The API key",
+					Sensitive:   true,
+				},
+			}},
 		},
 	}
 
-	err = Generate("Microsoft.Test/testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("Microsoft.Test/testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	// Check variables.tf
@@ -1043,44 +752,30 @@ func TestGenerate_ArraySecretItems_TreatedAsSingleSecretArray(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"normalField": {
-							Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-						},
-						"secrets": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"array"},
-								Items: &openapi3.SchemaRef{
-									Value: &openapi3.Schema{
-										Type: &openapi3.Types{"object"},
-										Properties: map[string]*openapi3.SchemaRef{
-											"name": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}}},
-											"value": {
-												Value: &openapi3.Schema{
-													Type: &openapi3.Types{"string"},
-													Extensions: map[string]any{
-														"x-ms-secret": true,
-													},
-												},
-											},
-										},
-									},
-								},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"normalField": {Name: "normalField", Type: schema.TypeString},
+				"secrets": {
+					Name: "secrets",
+					Type: schema.TypeArray,
+					ItemType: &schema.Property{
+						Type: schema.TypeObject,
+						Children: map[string]*schema.Property{
+							"name": {Name: "name", Type: schema.TypeString},
+							"value": {
+								Name:      "value",
+								Type:      schema.TypeString,
+								Sensitive: true,
 							},
 						},
 					},
 				},
-			},
+			}},
 		},
 	}
 
-	err = Generate("Microsoft.Test/testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("Microsoft.Test/testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -1133,75 +828,54 @@ func TestGenerate_ResponseExportValues(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"location": {
-				Value: &openapi3.Schema{
-					Type:        &openapi3.Types{"string"},
-					Description: "Resource location",
+	rs := &schema.ResourceSchema{
+		SupportsLocation: true,
+		Properties: map[string]*schema.Property{
+			"location": {Name: "location", Type: schema.TypeString, Description: "Resource location"},
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"defaultDomain": {
+					Name:        "defaultDomain",
+					Type:        schema.TypeString,
+					ReadOnly:    true,
+					Description: "Default domain",
 				},
-			},
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"defaultDomain": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								ReadOnly:    true,
-								Description: "Default domain",
-							},
-						},
-						"staticIp": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								ReadOnly:    true,
-								Description: "Static IP",
-							},
-						},
-						"provisioningState": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								ReadOnly:    true,
-								Description: "Provisioning state",
-							},
-						},
-						"writableField": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								Description: "Writable field",
-							},
-						},
-					},
+				"staticIp": {
+					Name:        "staticIp",
+					Type:        schema.TypeString,
+					ReadOnly:    true,
+					Description: "Static IP",
 				},
-			},
-			"identity": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"principalId": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								ReadOnly:    true,
-								Description: "Principal ID",
-							},
-						},
-						"tenantId": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"string"},
-								ReadOnly:    true,
-								Description: "Tenant ID",
-							},
-						},
-					},
+				"provisioningState": {
+					Name:        "provisioningState",
+					Type:        schema.TypeString,
+					ReadOnly:    true,
+					Description: "Provisioning state",
 				},
-			},
+				"writableField": {
+					Name:        "writableField",
+					Type:        schema.TypeString,
+					Description: "Writable field",
+				},
+			}},
+			"identity": {Name: "identity", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"principalId": {
+					Name:        "principalId",
+					Type:        schema.TypeString,
+					ReadOnly:    true,
+					Description: "Principal ID",
+				},
+				"tenantId": {
+					Name:        "tenantId",
+					Type:        schema.TypeString,
+					ReadOnly:    true,
+					Description: "Tenant ID",
+				},
+			}},
 		},
 	}
 
 	apiVersion := "2024-01-01"
-	err = Generate("Microsoft.App/managedEnvironments", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion(apiVersion), WithSupportsLocation(true))
+	err = Generate("Microsoft.App/managedEnvironments", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion(apiVersion))
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")
@@ -1243,64 +917,51 @@ func TestGenerate_ResponseExportValuesWithBlocklist(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"goodField": {
-							Value: &openapi3.Schema{
-								Type:     &openapi3.Types{"string"},
-								ReadOnly: true,
-							},
-						},
-						"eTag": {
-							Value: &openapi3.Schema{
-								Type:     &openapi3.Types{"string"},
-								ReadOnly: true,
-							},
-						},
-						"createdAt": {
-							Value: &openapi3.Schema{
-								Type:     &openapi3.Types{"string"},
-								ReadOnly: true,
-							},
-						},
-						"status": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"object"},
-								Properties: map[string]*openapi3.SchemaRef{
-									"phase": {
-										Value: &openapi3.Schema{
-											Type:     &openapi3.Types{"string"},
-											ReadOnly: true,
-										},
-									},
-								},
-							},
-						},
-						"provisioningError": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"object"},
-								Properties: map[string]*openapi3.SchemaRef{
-									"code": {
-										Value: &openapi3.Schema{
-											Type:     &openapi3.Types{"string"},
-											ReadOnly: true,
-										},
-									},
-								},
-							},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"goodField": {
+					Name:     "goodField",
+					Type:     schema.TypeString,
+					ReadOnly: true,
+				},
+				"eTag": {
+					Name:     "eTag",
+					Type:     schema.TypeString,
+					ReadOnly: true,
+				},
+				"createdAt": {
+					Name:     "createdAt",
+					Type:     schema.TypeString,
+					ReadOnly: true,
+				},
+				"status": {
+					Name: "status",
+					Type: schema.TypeObject,
+					Children: map[string]*schema.Property{
+						"phase": {
+							Name:     "phase",
+							Type:     schema.TypeString,
+							ReadOnly: true,
 						},
 					},
 				},
-			},
+				"provisioningError": {
+					Name: "provisioningError",
+					Type: schema.TypeObject,
+					Children: map[string]*schema.Property{
+						"code": {
+							Name:     "code",
+							Type:     schema.TypeString,
+							ReadOnly: true,
+						},
+					},
+				},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")
@@ -1331,25 +992,18 @@ func TestGenerate_ResponseExportValuesEmptyWhenNoReadOnly(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"writableField": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"string"},
-							},
-						},
-					},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"writableField": {
+					Name: "writableField",
+					Type: schema.TypeString,
 				},
-			},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	mainBody := parseHCLBody(t, "main.tf")
@@ -1368,4 +1022,81 @@ func TestGenerate_ResponseExportValuesEmptyWhenNoReadOnly(t *testing.T) {
 	require.NoError(t, err)
 	mainContent := string(mainBytes)
 	assert.NotContains(t, mainContent, "Trim response_export_values")
+}
+
+// Helper functions
+
+func parseHCLBody(t *testing.T, path string) *hclsyntax.Body {
+	t.Helper()
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	file, diags := hclsyntax.ParseConfig(data, path, hcl.InitialPos)
+	require.False(t, diags.HasErrors(), diags.Error())
+
+	body, ok := file.Body.(*hclsyntax.Body)
+	require.True(t, ok, "expected hclsyntax.Body")
+
+	return body
+}
+
+func findBlock(body *hclsyntax.Body, typ string, labels ...string) *hclsyntax.Block {
+	for _, block := range body.Blocks {
+		if block.Type != typ {
+			continue
+		}
+		if len(labels) == 0 && len(block.Labels) == 0 {
+			return block
+		}
+		if len(block.Labels) != len(labels) {
+			continue
+		}
+		match := true
+		for i, l := range labels {
+			if block.Labels[i] != l {
+				match = false
+				break
+			}
+		}
+		if match {
+			return block
+		}
+	}
+	return nil
+}
+
+func requireBlock(t *testing.T, body *hclsyntax.Body, typ string, labels ...string) *hclsyntax.Block {
+	t.Helper()
+	block := findBlock(body, typ, labels...)
+	require.NotNil(t, block, "expected block %s %v", typ, labels)
+	return block
+}
+
+func attributeStringValue(t *testing.T, attr *hclsyntax.Attribute) string {
+	t.Helper()
+	require.NotNil(t, attr)
+	val, diags := attr.Expr.Value(nil)
+	require.False(t, diags.HasErrors(), diags.Error())
+	require.True(t, val.Type().Equals(cty.String), "expected string value, got %s", val.Type().FriendlyName())
+	return val.AsString()
+}
+
+func expressionString(t *testing.T, expr hcl.Expression) string {
+	t.Helper()
+
+	rng := expr.Range()
+	data, err := os.ReadFile(rng.Filename)
+	require.NoError(t, err)
+
+	require.LessOrEqual(t, rng.End.Byte, len(data), "expression end out of range")
+	require.LessOrEqual(t, rng.Start.Byte, rng.End.Byte, "expression range invalid")
+
+	exprSrc := data[rng.Start.Byte:rng.End.Byte]
+	formatted := hclwrite.Format(exprSrc)
+	return strings.TrimSpace(string(formatted))
+}
+
+func ptrInt64(v int64) *int64 {
+	return &v
 }

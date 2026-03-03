@@ -4,11 +4,13 @@ import (
 	"os"
 	"testing"
 
-	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func int64Ptr(v int64) *int64 { return &v }
 
 func TestGenerateValidations_StringMinLength(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -18,26 +20,15 @@ func TestGenerateValidations_StringMinLength(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"displayName": {
-							Value: &openapi3.Schema{
-								Type:      &openapi3.Types{"string"},
-								MinLength: 3,
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"displayName": {Name: "displayName", Type: schema.TypeString, Constraints: schema.Constraints{MinLength: int64Ptr(3)}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -61,27 +52,15 @@ func TestGenerateValidations_StringMaxLength(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	maxLen := uint64(50)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"description": {
-							Value: &openapi3.Schema{
-								Type:      &openapi3.Types{"string"},
-								MaxLength: &maxLen,
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"description": {Name: "description", Type: schema.TypeString, Constraints: schema.Constraints{MaxLength: int64Ptr(50)}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -97,50 +76,6 @@ func TestGenerateValidations_StringMaxLength(t *testing.T) {
 	assert.Contains(t, errorMsg, "maximum length of 50")
 }
 
-func TestGenerateValidations_StringUUIDFormat(t *testing.T) {
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"id": {
-							Value: &openapi3.Schema{
-								Type:   &openapi3.Types{"string"},
-								Format: "uuid",
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
-	require.NoError(t, err)
-
-	varsBody := parseHCLBody(t, "variables.tf")
-	idVar := requireBlock(t, varsBody, "variable", "id")
-
-	validationBlock := findBlock(idVar.Body, "validation")
-	require.NotNil(t, validationBlock, "id variable should have UUID format validation")
-
-	conditionExpr := expressionString(t, validationBlock.Body.Attributes["condition"].Expr)
-	assert.Contains(t, conditionExpr, "can(regex(")
-	assert.Contains(t, conditionExpr, "var.id")
-
-	errorMsg := attributeStringValue(t, validationBlock.Body.Attributes["error_message"])
-	assert.Contains(t, errorMsg, "valid UUID")
-}
-
 func TestGenerateValidations_StringPattern(t *testing.T) {
 	tmpDir := t.TempDir()
 	originalWd, err := os.Getwd()
@@ -149,26 +84,15 @@ func TestGenerateValidations_StringPattern(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"resourceName": {
-							Value: &openapi3.Schema{
-								Type:    &openapi3.Types{"string"},
-								Pattern: "^[a-zA-Z0-9-_]{1,63}$",
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"resourceName": {Name: "resourceName", Type: schema.TypeString, Constraints: schema.Constraints{Pattern: "^[a-zA-Z0-9-_]{1,63}$"}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -195,29 +119,15 @@ func TestGenerateValidations_ArrayMinItems(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"tags": {
-							Value: &openapi3.Schema{
-								Type:     &openapi3.Types{"array"},
-								MinItems: 1,
-								Items: &openapi3.SchemaRef{
-									Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-								},
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"tags": {Name: "tags", Type: schema.TypeArray, ItemType: &schema.Property{Type: schema.TypeString}, Constraints: schema.Constraints{MinItems: int64Ptr(1)}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -241,30 +151,15 @@ func TestGenerateValidations_ArrayMaxItems(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	maxItems := uint64(10)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"items": {
-							Value: &openapi3.Schema{
-								Type:     &openapi3.Types{"array"},
-								MaxItems: &maxItems,
-								Items: &openapi3.SchemaRef{
-									Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-								},
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"items": {Name: "items", Type: schema.TypeArray, ItemType: &schema.Property{Type: schema.TypeString}, Constraints: schema.Constraints{MaxItems: int64Ptr(10)}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -280,52 +175,6 @@ func TestGenerateValidations_ArrayMaxItems(t *testing.T) {
 	assert.Contains(t, errorMsg, "at most 10 item")
 }
 
-func TestGenerateValidations_ArrayUniqueItems(t *testing.T) {
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"uniqueList": {
-							Value: &openapi3.Schema{
-								Type:        &openapi3.Types{"array"},
-								UniqueItems: true,
-								Items: &openapi3.SchemaRef{
-									Value: &openapi3.Schema{Type: &openapi3.Types{"string"}},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
-	require.NoError(t, err)
-
-	varsBody := parseHCLBody(t, "variables.tf")
-	uniqueVar := requireBlock(t, varsBody, "variable", "unique_list")
-
-	validationBlock := findBlock(uniqueVar.Body, "validation")
-	require.NotNil(t, validationBlock, "uniqueList variable should have uniqueItems validation")
-
-	conditionExpr := expressionString(t, validationBlock.Body.Attributes["condition"].Expr)
-	assert.Contains(t, conditionExpr, "length(distinct(var.unique_list)) == length(var.unique_list)")
-
-	errorMsg := attributeStringValue(t, validationBlock.Body.Attributes["error_message"])
-	assert.Contains(t, errorMsg, "unique items")
-}
-
 func TestGenerateValidations_NumberMinimum(t *testing.T) {
 	tmpDir := t.TempDir()
 	originalWd, err := os.Getwd()
@@ -334,27 +183,15 @@ func TestGenerateValidations_NumberMinimum(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	min := float64(1)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"count": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"integer"},
-								Min:  &min,
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"count": {Name: "count", Type: schema.TypeInteger, Constraints: schema.Constraints{MinValue: int64Ptr(1)}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -378,27 +215,15 @@ func TestGenerateValidations_NumberMaximum(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	max := float64(100)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"percentage": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"number"},
-								Max:  &max,
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"percentage": {Name: "percentage", Type: schema.TypeInteger, Constraints: schema.Constraints{MaxValue: int64Ptr(100)}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -414,248 +239,6 @@ func TestGenerateValidations_NumberMaximum(t *testing.T) {
 	assert.Contains(t, errorMsg, "less than or equal to 100")
 }
 
-func TestGenerateValidations_NumberExclusiveMinimum(t *testing.T) {
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
-	min := float64(0)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"rating": {
-							Value: &openapi3.Schema{
-								Type:         &openapi3.Types{"number"},
-								Min:          &min,
-								ExclusiveMin: true,
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
-	require.NoError(t, err)
-
-	varsBody := parseHCLBody(t, "variables.tf")
-	ratingVar := requireBlock(t, varsBody, "variable", "rating")
-
-	validationBlock := findBlock(ratingVar.Body, "validation")
-	require.NotNil(t, validationBlock, "rating variable should have exclusive minimum validation")
-
-	conditionExpr := expressionString(t, validationBlock.Body.Attributes["condition"].Expr)
-	assert.Contains(t, conditionExpr, "var.rating == null || var.rating > 0")
-
-	errorMsg := attributeStringValue(t, validationBlock.Body.Attributes["error_message"])
-	assert.Contains(t, errorMsg, "greater than 0")
-}
-
-func TestGenerateValidations_NumberExclusiveMaximum(t *testing.T) {
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
-	max := float64(10)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"scale": {
-							Value: &openapi3.Schema{
-								Type:         &openapi3.Types{"integer"},
-								Max:          &max,
-								ExclusiveMax: true,
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
-	require.NoError(t, err)
-
-	varsBody := parseHCLBody(t, "variables.tf")
-	scaleVar := requireBlock(t, varsBody, "variable", "scale")
-
-	validationBlock := findBlock(scaleVar.Body, "validation")
-	require.NotNil(t, validationBlock, "scale variable should have exclusive maximum validation")
-
-	conditionExpr := expressionString(t, validationBlock.Body.Attributes["condition"].Expr)
-	assert.Contains(t, conditionExpr, "var.scale == null || var.scale < 10")
-
-	errorMsg := attributeStringValue(t, validationBlock.Body.Attributes["error_message"])
-	assert.Contains(t, errorMsg, "less than 10")
-}
-
-func TestGenerateValidations_NumberMultipleOf(t *testing.T) {
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
-	multipleOf := float64(5)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"size": {
-							Value: &openapi3.Schema{
-								Type:       &openapi3.Types{"integer"},
-								MultipleOf: &multipleOf,
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
-	require.NoError(t, err)
-
-	varsBody := parseHCLBody(t, "variables.tf")
-	sizeVar := requireBlock(t, varsBody, "variable", "size")
-
-	validationBlock := findBlock(sizeVar.Body, "validation")
-	require.NotNil(t, validationBlock, "size variable should have multipleOf validation")
-
-	conditionExpr := expressionString(t, validationBlock.Body.Attributes["condition"].Expr)
-	assert.Contains(t, conditionExpr, "abs(mod(var.size, 5))")
-
-	errorMsg := attributeStringValue(t, validationBlock.Body.Attributes["error_message"])
-	assert.Contains(t, errorMsg, "multiple of 5")
-}
-
-func TestGenerateValidations_EnumViaAllOf(t *testing.T) {
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"tier": {
-							Value: &openapi3.Schema{
-								AllOf: []*openapi3.SchemaRef{
-									{
-										Value: &openapi3.Schema{
-											Type: &openapi3.Types{"string"},
-										},
-									},
-									{
-										Value: &openapi3.Schema{
-											Enum: []any{"Basic", "Standard", "Premium"},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
-	require.NoError(t, err)
-
-	varsBody := parseHCLBody(t, "variables.tf")
-	tierVar := requireBlock(t, varsBody, "variable", "tier")
-
-	validationBlock := findBlock(tierVar.Body, "validation")
-	require.NotNil(t, validationBlock, "tier variable should have enum validation via allOf")
-
-	conditionExpr := expressionString(t, validationBlock.Body.Attributes["condition"].Expr)
-	assert.Contains(t, conditionExpr, "contains(")
-
-	errorMsg := attributeStringValue(t, validationBlock.Body.Attributes["error_message"])
-	// Enum values should be sorted alphabetically
-	assert.Contains(t, errorMsg, "Basic")
-	assert.Contains(t, errorMsg, "Premium")
-	assert.Contains(t, errorMsg, "Standard")
-}
-
-func TestGenerateValidations_XMsEnum(t *testing.T) {
-	tmpDir := t.TempDir()
-	originalWd, err := os.Getwd()
-	require.NoError(t, err)
-	defer os.Chdir(originalWd)
-	err = os.Chdir(tmpDir)
-	require.NoError(t, err)
-
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"sku": {
-							Value: &openapi3.Schema{
-								Type: &openapi3.Types{"string"},
-								Extensions: map[string]any{
-									"x-ms-enum": map[string]any{
-										"name": "SkuName",
-										"values": []any{
-											map[string]any{"value": "Free"},
-											map[string]any{"value": "Shared"},
-											map[string]any{"value": "Basic"},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
-	require.NoError(t, err)
-
-	varsBody := parseHCLBody(t, "variables.tf")
-	skuVar := requireBlock(t, varsBody, "variable", "sku")
-
-	validationBlock := findBlock(skuVar.Body, "validation")
-	require.NotNil(t, validationBlock, "sku variable should have x-ms-enum validation")
-
-	errorMsg := attributeStringValue(t, validationBlock.Body.Attributes["error_message"])
-	// Enum values should be sorted
-	assert.Contains(t, errorMsg, "Basic")
-	assert.Contains(t, errorMsg, "Free")
-	assert.Contains(t, errorMsg, "Shared")
-}
-
 func TestGenerateValidations_MultipleConstraints(t *testing.T) {
 	tmpDir := t.TempDir()
 	originalWd, err := os.Getwd()
@@ -664,28 +247,15 @@ func TestGenerateValidations_MultipleConstraints(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	maxLen := uint64(100)
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type: &openapi3.Types{"object"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"username": {
-							Value: &openapi3.Schema{
-								Type:      &openapi3.Types{"string"},
-								MinLength: 3,
-								MaxLength: &maxLen,
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"username": {Name: "username", Type: schema.TypeString, Constraints: schema.Constraints{MinLength: int64Ptr(3), MaxLength: int64Ptr(100)}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -704,27 +274,15 @@ func TestGenerateValidations_RequiredField(t *testing.T) {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 
-	schema := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {
-				Value: &openapi3.Schema{
-					Type:     &openapi3.Types{"object"},
-					Required: []string{"requiredName"},
-					Properties: map[string]*openapi3.SchemaRef{
-						"requiredName": {
-							Value: &openapi3.Schema{
-								Type:      &openapi3.Types{"string"},
-								MinLength: 1,
-							},
-						},
-					},
-				},
-			},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"requiredName": {Name: "requiredName", Type: schema.TypeString, Required: true, Constraints: schema.Constraints{MinLength: int64Ptr(1)}},
+			}},
 		},
 	}
 
-	err = Generate("testResource", WithSchema(schema), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
 	require.NoError(t, err)
 
 	varsBody := parseHCLBody(t, "variables.tf")
@@ -742,45 +300,37 @@ func TestGenerateValidations_RequiredField(t *testing.T) {
 	assert.Contains(t, conditionExpr, "length(var.required_name) >= 1")
 }
 
-func TestResolveSchemaForValidation_AllOfMostRestrictive(t *testing.T) {
-	maxLen100 := uint64(100)
-	maxLen50 := uint64(50)
-	maxItems10 := uint64(10)
-	maxItems5 := uint64(5)
-	min0 := float64(0)
-	min5 := float64(5)
-	max20 := float64(20)
-	max10 := float64(10)
+func TestGenerateValidations_Enum(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalWd, err := os.Getwd()
+	require.NoError(t, err)
+	defer os.Chdir(originalWd)
+	err = os.Chdir(tmpDir)
+	require.NoError(t, err)
 
-	s := &openapi3.Schema{
-		AllOf: []*openapi3.SchemaRef{
-			{Value: &openapi3.Schema{Type: &openapi3.Types{"string"}, MinLength: 1, MaxLength: &maxLen100}},
-			{Value: &openapi3.Schema{MinLength: 3, MaxLength: &maxLen50}},
-			{Value: &openapi3.Schema{MinItems: 1, MaxItems: &maxItems10}},
-			{Value: &openapi3.Schema{MinItems: 2, MaxItems: &maxItems5}},
-			{Value: &openapi3.Schema{Min: &min0, Max: &max20}},
-			{Value: &openapi3.Schema{Min: &min5, ExclusiveMin: true, Max: &max10, ExclusiveMax: true}},
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"licenseType": {Name: "licenseType", Type: schema.TypeString, Enum: []string{"None", "Windows_Server"}},
+			}},
 		},
 	}
 
-	resolved := resolveSchemaForValidation(s)
-	require.NotNil(t, resolved)
-	assert.Equal(t, uint64(3), resolved.MinLength)
-	if assert.NotNil(t, resolved.MaxLength) {
-		assert.Equal(t, uint64(50), *resolved.MaxLength)
-	}
-	assert.Equal(t, uint64(2), resolved.MinItems)
-	if assert.NotNil(t, resolved.MaxItems) {
-		assert.Equal(t, uint64(5), *resolved.MaxItems)
-	}
-	if assert.NotNil(t, resolved.Min) {
-		assert.Equal(t, 5.0, *resolved.Min)
-		assert.True(t, resolved.ExclusiveMin)
-	}
-	if assert.NotNil(t, resolved.Max) {
-		assert.Equal(t, 10.0, *resolved.Max)
-		assert.True(t, resolved.ExclusiveMax)
-	}
+	err = Generate("testResource", WithResourceSchema(rs), WithLocalName("resource_body"), WithAPIVersion("2024-01-01"))
+	require.NoError(t, err)
+
+	varsBody := parseHCLBody(t, "variables.tf")
+	ltVar := requireBlock(t, varsBody, "variable", "license_type")
+
+	validationBlock := findBlock(ltVar.Body, "validation")
+	require.NotNil(t, validationBlock, "license_type variable should have enum validation")
+
+	conditionExpr := expressionString(t, validationBlock.Body.Attributes["condition"].Expr)
+	assert.Contains(t, conditionExpr, "contains(")
+
+	errorMsg := attributeStringValue(t, validationBlock.Body.Attributes["error_message"])
+	assert.Contains(t, errorMsg, "None")
+	assert.Contains(t, errorMsg, "Windows_Server")
 }
 
 // Helper function to find all blocks of a given type

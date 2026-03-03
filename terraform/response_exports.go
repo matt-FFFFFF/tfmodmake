@@ -4,10 +4,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 )
 
-// extractComputedPaths traverses the schema and extracts paths to computed (non-writable) properties.
+// extractComputedPaths traverses the ResourceSchema and extracts paths to computed (non-writable) properties.
 // It returns a sorted list of JSON paths suitable for azapi_resource.response_export_values.
 //
 // The function applies a blocklist to filter out noisy fields:
@@ -19,13 +19,18 @@ import (
 //
 // These blocklist rules help generate a useful default set of exports that module authors
 // can trim to their specific needs.
-func extractComputedPaths(schema *openapi3.Schema) []string {
-	if schema == nil {
+func extractComputedPaths(rs *schema.ResourceSchema) []string {
+	if rs == nil {
 		return nil
 	}
 
 	var paths []string
-	extractComputedPathsRecursive(schema, "", &paths, make(map[*openapi3.Schema]struct{}))
+	for propName, prop := range rs.Properties {
+		if prop == nil {
+			continue
+		}
+		extractComputedPathsRecursive(prop, propName, &paths)
+	}
 
 	// Apply blocklist filtering
 	filtered := filterBlocklistedPaths(paths)
@@ -36,104 +41,45 @@ func extractComputedPaths(schema *openapi3.Schema) []string {
 	return filtered
 }
 
-// extractComputedPathsRecursive recursively traverses the schema to find computed (non-writable) properties.
-// Uses a recursion stack to prevent infinite loops while allowing the same schema to be
-// visited multiple times if it appears in different paths.
-func extractComputedPathsRecursive(schema *openapi3.Schema, currentPath string, paths *[]string, visited map[*openapi3.Schema]struct{}) {
-	if schema == nil {
+// extractComputedPathsRecursive recursively traverses properties to find computed (non-writable) fields.
+func extractComputedPathsRecursive(prop *schema.Property, currentPath string, paths *[]string) {
+	if prop == nil {
 		return
 	}
-
-	// Prevent infinite recursion from circular references using a stack-based approach
-	// Mark as visited before descending, unmark on return
-	if _, seen := visited[schema]; seen {
-		return
-	}
-	visited[schema] = struct{}{}
-	defer delete(visited, schema)
 
 	// If this property is non-writable, it's a computed value.
-	if currentPath != "" && !isWritableProperty(schema) {
+	if currentPath != "" && prop.ReadOnly {
 		// Avoid exporting root-level id/name since those are already available as
 		// azapi_resource.this.id and azapi_resource.this.name.
 		if !(strings.IndexByte(currentPath, '.') == -1 && (currentPath == "id" || currentPath == "name")) {
-			// Export scalars, objects, and arrays. Objects/arrays are useful when the
-			// schema doesn't flag nested leaves as readOnly but the provider returns
-			// a computed structure.
-			if isLeafScalar(schema) || isContainer(schema) {
+			// Export scalars, objects, and arrays.
+			if prop.IsScalar() || prop.IsContainer() {
 				*paths = append(*paths, currentPath)
 			}
 		}
 		// For leaf scalars there's nothing more to traverse.
-		if isLeafScalar(schema) {
+		if prop.IsScalar() {
 			return
 		}
 	}
 
-	// Process object properties
-	if len(schema.Properties) > 0 {
-		for propName, propRef := range schema.Properties {
-			if propRef == nil || propRef.Value == nil {
+	// Process object children
+	if len(prop.Children) > 0 {
+		for childName, child := range prop.Children {
+			if child == nil {
 				continue
 			}
 
 			var newPath string
 			if currentPath == "" {
-				newPath = propName
+				newPath = childName
 			} else {
-				newPath = currentPath + "." + propName
+				newPath = currentPath + "." + childName
 			}
 
-			extractComputedPathsRecursive(propRef.Value, newPath, paths, visited)
+			extractComputedPathsRecursive(child, newPath, paths)
 		}
 	}
-
-	// Process allOf schemas (inheritance)
-	for _, allOfRef := range schema.AllOf {
-		if allOfRef == nil || allOfRef.Value == nil {
-			continue
-		}
-		extractComputedPathsRecursive(allOfRef.Value, currentPath, paths, visited)
-	}
-}
-
-// isLeafScalar returns true if the schema represents a scalar type (string, number, integer, boolean)
-// and is not an object or array. Checks all types in the schema.Type array.
-func isLeafScalar(schema *openapi3.Schema) bool {
-	if schema == nil || schema.Type == nil {
-		return false
-	}
-
-	types := *schema.Type
-	if len(types) == 0 {
-		return false
-	}
-
-	// Check all types in the array (e.g., ["null", "string"])
-	// Return true if any type is a scalar (ignoring "null")
-	hasScalar := false
-	for _, typ := range types {
-		if typ == "string" || typ == "number" || typ == "integer" || typ == "boolean" {
-			hasScalar = true
-		} else if typ != "null" {
-			// If there's a non-scalar, non-null type (object, array), it's not a leaf scalar
-			return false
-		}
-	}
-
-	return hasScalar
-}
-
-func isContainer(schema *openapi3.Schema) bool {
-	if schema == nil || schema.Type == nil {
-		return false
-	}
-	for _, typ := range *schema.Type {
-		if typ == "object" || typ == "array" {
-			return true
-		}
-	}
-	return false
 }
 
 // filterBlocklistedPaths removes paths that match the blocklist criteria:

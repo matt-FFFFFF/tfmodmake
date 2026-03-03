@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
 	"github.com/matt-FFFFFF/tfmodmake/naming"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -23,7 +23,7 @@ func cleanTypeString(typeStr string) string {
 	return strings.Join(cleaned, "/")
 }
 
-func buildMain(schema *openapi3.Schema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema bool, secrets []secretField) *hclwrite.File {
+func buildMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema bool, secrets []secretField) *hclwrite.File {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -96,12 +96,12 @@ func buildMain(schema *openapi3.Schema, resourceType, apiVersion, localName stri
 	}
 
 	// Generate response_export_values from computed (non-writable) fields in the schema
-	exportPaths := extractComputedPaths(schema)
+	exportPaths := extractComputedPaths(rs)
 	resourceBody.SetAttributeRaw("response_export_values", hclgen.TokensForMultilineStringList(exportPaths))
 
 	return file
 }
 
-func generateMain(schema *openapi3.Schema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema bool, secrets []secretField, outputDir string) error {
-	return hclgen.WriteFileToDir(outputDir, "main.tf", buildMain(schema, resourceType, apiVersion, localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, secrets))
+func generateMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema bool, secrets []secretField, outputDir string) error {
+	return hclgen.WriteFileToDir(outputDir, "main.tf", buildMain(rs, resourceType, apiVersion, localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, secrets))
 }

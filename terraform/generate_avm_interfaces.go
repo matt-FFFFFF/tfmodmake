@@ -5,7 +5,6 @@ import (
 
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
-	"github.com/matt-FFFFFF/tfmodmake/openapi"
 	"github.com/zclconf/go-cty/cty"
 )
 
@@ -109,7 +108,7 @@ func privateEndpointDefaultSubresource(resourceType string) (string, bool) {
 
 // generateInterfaces creates main.interfaces.tf with the AVM interfaces module wiring.
 // Only includes interface wiring for capabilities with swagger evidence.
-func generateInterfaces(caps openapi.InterfaceCapabilities, outputDir string) error {
+func generateInterfaces(caps InterfaceCapabilities, outputDir string) error {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 

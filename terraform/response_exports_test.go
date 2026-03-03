@@ -3,31 +3,28 @@ package terraform
 import (
 	"testing"
 
-	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestExtractComputedPaths(t *testing.T) {
 	tests := []struct {
 		name     string
-		schema   *openapi3.Schema
+		rs       *schema.ResourceSchema
 		expected []string
 	}{
 		{
 			name: "simple readOnly string properties",
-			schema: &openapi3.Schema{
-				Type: &openapi3.Types{"object"},
-				Properties: map[string]*openapi3.SchemaRef{
+			rs: &schema.ResourceSchema{
+				Properties: map[string]*schema.Property{
 					"id": {
-						Value: &openapi3.Schema{
-							Type:     &openapi3.Types{"string"},
-							ReadOnly: true,
-						},
+						Name:     "id",
+						Type:     schema.TypeString,
+						ReadOnly: true,
 					},
 					"name": {
-						Value: &openapi3.Schema{
-							Type: &openapi3.Types{"string"},
-						},
+						Name: "name",
+						Type: schema.TypeString,
 					},
 				},
 			},
@@ -35,49 +32,41 @@ func TestExtractComputedPaths(t *testing.T) {
 		},
 		{
 			name: "nested readOnly properties",
-			schema: &openapi3.Schema{
-				Type: &openapi3.Types{"object"},
-				Properties: map[string]*openapi3.SchemaRef{
+			rs: &schema.ResourceSchema{
+				Properties: map[string]*schema.Property{
 					"properties": {
-						Value: &openapi3.Schema{
-							Type: &openapi3.Types{"object"},
-							Properties: map[string]*openapi3.SchemaRef{
-								"defaultDomain": {
-									Value: &openapi3.Schema{
-										Type:     &openapi3.Types{"string"},
-										ReadOnly: true,
-									},
-								},
-								"staticIp": {
-									Value: &openapi3.Schema{
-										Type:     &openapi3.Types{"string"},
-										ReadOnly: true,
-									},
-								},
-								"provisioningState": {
-									Value: &openapi3.Schema{
-										Type:     &openapi3.Types{"string"},
-										ReadOnly: true,
-									},
-								},
-								"writableField": {
-									Value: &openapi3.Schema{
-										Type: &openapi3.Types{"string"},
-									},
-								},
+						Name: "properties",
+						Type: schema.TypeObject,
+						Children: map[string]*schema.Property{
+							"defaultDomain": {
+								Name:     "defaultDomain",
+								Type:     schema.TypeString,
+								ReadOnly: true,
+							},
+							"staticIp": {
+								Name:     "staticIp",
+								Type:     schema.TypeString,
+								ReadOnly: true,
+							},
+							"provisioningState": {
+								Name:     "provisioningState",
+								Type:     schema.TypeString,
+								ReadOnly: true,
+							},
+							"writableField": {
+								Name: "writableField",
+								Type: schema.TypeString,
 							},
 						},
 					},
 					"identity": {
-						Value: &openapi3.Schema{
-							Type: &openapi3.Types{"object"},
-							Properties: map[string]*openapi3.SchemaRef{
-								"principalId": {
-									Value: &openapi3.Schema{
-										Type:     &openapi3.Types{"string"},
-										ReadOnly: true,
-									},
-								},
+						Name: "identity",
+						Type: schema.TypeObject,
+						Children: map[string]*schema.Property{
+							"principalId": {
+								Name:     "principalId",
+								Type:     schema.TypeString,
+								ReadOnly: true,
 							},
 						},
 					},
@@ -92,26 +81,22 @@ func TestExtractComputedPaths(t *testing.T) {
 		},
 		{
 			name: "readOnly number and boolean types",
-			schema: &openapi3.Schema{
-				Type: &openapi3.Types{"object"},
-				Properties: map[string]*openapi3.SchemaRef{
+			rs: &schema.ResourceSchema{
+				Properties: map[string]*schema.Property{
 					"count": {
-						Value: &openapi3.Schema{
-							Type:     &openapi3.Types{"integer"},
-							ReadOnly: true,
-						},
+						Name:     "count",
+						Type:     schema.TypeInteger,
+						ReadOnly: true,
 					},
 					"percentage": {
-						Value: &openapi3.Schema{
-							Type:     &openapi3.Types{"number"},
-							ReadOnly: true,
-						},
+						Name:     "percentage",
+						Type:     schema.TypeInteger,
+						ReadOnly: true,
 					},
 					"enabled": {
-						Value: &openapi3.Schema{
-							Type:     &openapi3.Types{"boolean"},
-							ReadOnly: true,
-						},
+						Name:     "enabled",
+						Type:     schema.TypeBoolean,
+						ReadOnly: true,
 					},
 				},
 			},
@@ -119,38 +104,29 @@ func TestExtractComputedPaths(t *testing.T) {
 		},
 		{
 			name: "includes computed objects and arrays",
-			schema: &openapi3.Schema{
-				Type: &openapi3.Types{"object"},
-				Properties: map[string]*openapi3.SchemaRef{
+			rs: &schema.ResourceSchema{
+				Properties: map[string]*schema.Property{
 					"readOnlyObject": {
-						Value: &openapi3.Schema{
-							Type:     &openapi3.Types{"object"},
-							ReadOnly: true,
-							Properties: map[string]*openapi3.SchemaRef{
-								"nested": {
-									Value: &openapi3.Schema{
-										Type: &openapi3.Types{"string"},
-									},
-								},
+						Name:     "readOnlyObject",
+						Type:     schema.TypeObject,
+						ReadOnly: true,
+						Children: map[string]*schema.Property{
+							"nested": {
+								Name: "nested",
+								Type: schema.TypeString,
 							},
 						},
 					},
 					"readOnlyArray": {
-						Value: &openapi3.Schema{
-							Type:     &openapi3.Types{"array"},
-							ReadOnly: true,
-							Items: &openapi3.SchemaRef{
-								Value: &openapi3.Schema{
-									Type: &openapi3.Types{"string"},
-								},
-							},
-						},
+						Name:     "readOnlyArray",
+						Type:     schema.TypeArray,
+						ReadOnly: true,
+						ItemType: &schema.Property{Type: schema.TypeString},
 					},
 					"readOnlyScalar": {
-						Value: &openapi3.Schema{
-							Type:     &openapi3.Types{"string"},
-							ReadOnly: true,
-						},
+						Name:     "readOnlyScalar",
+						Type:     schema.TypeString,
+						ReadOnly: true,
 					},
 				},
 			},
@@ -158,13 +134,13 @@ func TestExtractComputedPaths(t *testing.T) {
 		},
 		{
 			name:     "nil schema returns empty list",
-			schema:   nil,
+			rs:       nil,
 			expected: nil,
 		},
 		{
 			name: "empty schema returns empty list",
-			schema: &openapi3.Schema{
-				Type: &openapi3.Types{"object"},
+			rs: &schema.ResourceSchema{
+				Properties: map[string]*schema.Property{},
 			},
 			expected: []string{},
 		},
@@ -172,7 +148,7 @@ func TestExtractComputedPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractComputedPaths(tt.schema)
+			got := extractComputedPaths(tt.rs)
 			assert.Equal(t, tt.expected, got)
 		})
 	}
@@ -271,77 +247,6 @@ func TestFilterBlocklistedPaths(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := filterBlocklistedPaths(tt.paths)
-			assert.Equal(t, tt.expected, got)
-		})
-	}
-}
-
-func TestIsLeafScalar(t *testing.T) {
-	tests := []struct {
-		name     string
-		schema   *openapi3.Schema
-		expected bool
-	}{
-		{
-			name:     "string is scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"string"}},
-			expected: true,
-		},
-		{
-			name:     "number is scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"number"}},
-			expected: true,
-		},
-		{
-			name:     "integer is scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"integer"}},
-			expected: true,
-		},
-		{
-			name:     "boolean is scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"boolean"}},
-			expected: true,
-		},
-		{
-			name:     "object is not scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"object"}},
-			expected: false,
-		},
-		{
-			name:     "array is not scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"array"}},
-			expected: false,
-		},
-		{
-			name:     "nil schema is not scalar",
-			schema:   nil,
-			expected: false,
-		},
-		{
-			name:     "schema with nil type is not scalar",
-			schema:   &openapi3.Schema{},
-			expected: false,
-		},
-		{
-			name:     "nullable string is scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"null", "string"}},
-			expected: true,
-		},
-		{
-			name:     "nullable integer is scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"null", "integer"}},
-			expected: true,
-		},
-		{
-			name:     "nullable object is not scalar",
-			schema:   &openapi3.Schema{Type: &openapi3.Types{"null", "object"}},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isLeafScalar(tt.schema)
 			assert.Equal(t, tt.expected, got)
 		})
 	}

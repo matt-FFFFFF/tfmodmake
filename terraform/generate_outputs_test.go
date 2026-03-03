@@ -3,7 +3,7 @@ package terraform
 import (
 	"testing"
 
-	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/matt-FFFFFF/tfmodmake/schema"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -30,63 +30,43 @@ func TestOutputNameForExportPath(t *testing.T) {
 	}
 }
 
-func TestDefaultTokensForSchema(t *testing.T) {
-	assert.Equal(t, "null", string(defaultTokensForSchema(nil).Bytes()))
+func TestDefaultTokensForProperty(t *testing.T) {
+	assert.Equal(t, "null", string(defaultTokensForProperty(nil).Bytes()))
 
-	obj := &openapi3.Schema{Type: &openapi3.Types{"object"}}
-	assert.Equal(t, "{}", string(defaultTokensForSchema(obj).Bytes()))
+	obj := &schema.Property{Type: schema.TypeObject}
+	assert.Equal(t, "{}", string(defaultTokensForProperty(obj).Bytes()))
 
-	arr := &openapi3.Schema{Type: &openapi3.Types{"array"}}
-	assert.Equal(t, "[]", string(defaultTokensForSchema(arr).Bytes()))
+	arr := &schema.Property{Type: schema.TypeArray}
+	assert.Equal(t, "[]", string(defaultTokensForProperty(arr).Bytes()))
 
-	scalar := &openapi3.Schema{Type: &openapi3.Types{"string"}}
-	assert.Equal(t, "null", string(defaultTokensForSchema(scalar).Bytes()))
+	scalar := &schema.Property{Type: schema.TypeString}
+	assert.Equal(t, "null", string(defaultTokensForProperty(scalar).Bytes()))
 }
 
-func TestSchemaForExportPath_FindsInAllOf(t *testing.T) {
-	base := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"foo": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}, Description: "Foo description"}},
+func TestPropertyForExportPath_FindsNestedProperty(t *testing.T) {
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"foo": {Name: "foo", Type: schema.TypeString, Description: "Foo description"},
 		},
 	}
-	root := &openapi3.Schema{
-		Type:  &openapi3.Types{"object"},
-		AllOf: openapi3.SchemaRefs{{Value: base}},
-	}
 
-	got := schemaForExportPath(root, "foo")
+	got := propertyForExportPath(rs, "foo")
 	if assert.NotNil(t, got) {
 		assert.Equal(t, "Foo description", got.Description)
 	}
 }
 
-func TestSchemaForExportPath_NestedProperties(t *testing.T) {
-	nested := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"bar": {Value: &openapi3.Schema{Type: &openapi3.Types{"string"}, Description: "Bar description"}},
-		},
-	}
-	root := &openapi3.Schema{
-		Type: &openapi3.Types{"object"},
-		Properties: map[string]*openapi3.SchemaRef{
-			"properties": {Value: nested},
+func TestPropertyForExportPath_NestedProperties(t *testing.T) {
+	rs := &schema.ResourceSchema{
+		Properties: map[string]*schema.Property{
+			"properties": {Name: "properties", Type: schema.TypeObject, Children: map[string]*schema.Property{
+				"bar": {Name: "bar", Type: schema.TypeString, Description: "Bar description"},
+			}},
 		},
 	}
 
-	got := schemaForExportPath(root, "properties.bar")
+	got := propertyForExportPath(rs, "properties.bar")
 	if assert.NotNil(t, got) {
 		assert.Equal(t, "Bar description", got.Description)
 	}
-}
-
-func TestSchemaForExportPath_CircularDoesNotLoop(t *testing.T) {
-	s := &openapi3.Schema{Type: &openapi3.Types{"object"}}
-	s.AllOf = openapi3.SchemaRefs{{Value: s}}
-
-	assert.NotPanics(t, func() {
-		got := schemaForExportPath(s, "foo")
-		assert.Nil(t, got)
-	})
 }
