@@ -26,8 +26,9 @@ go build -o "$TFMODMAKE_BIN" "$ROOT_DIR/cmd/tfmodmake"
 
 run_case() {
   local name="$1"
-  local spec="$2"
-  local resource="$3"
+  local resource="$2"
+  shift 2
+  local extra_flags=("$@")
 
   echo "== $name =="
 
@@ -35,7 +36,7 @@ run_case() {
   workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
   WORKDIRS+=("$workdir")
 
-  (cd "$workdir" && "$TFMODMAKE_BIN" gen -spec "$spec" -resource "$resource" >/dev/null)
+  (cd "$workdir" && "$TFMODMAKE_BIN" gen --resource "$resource" "${extra_flags[@]}" >/dev/null)
   (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
   (cd "$workdir" && terraform validate -no-color >/dev/null)
 
@@ -56,8 +57,7 @@ run_keyvault_case() {
     cd "$workdir" &&
       "$TFMODMAKE_BIN" \
         gen \
-        -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2025-05-01/openapi.json" \
-        -resource "Microsoft.KeyVault/vaults" \
+        --resource "Microsoft.KeyVault/vaults" \
         >/dev/null
   )
 
@@ -66,9 +66,8 @@ run_keyvault_case() {
     cd "$workdir/modules/secrets" &&
       "$TFMODMAKE_BIN" \
         gen \
-        -spec "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/keyvault/resource-manager/Microsoft.KeyVault/stable/2024-11-01/secrets.json" \
-        -resource "Microsoft.KeyVault/vaults/secrets" \
-        -local-name "secret_body" \
+        --resource "Microsoft.KeyVault/vaults/secrets" \
+        --local-name "secret_body" \
         >/dev/null
   )
 
@@ -88,39 +87,39 @@ run_update_case() {
   workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
   WORKDIRS+=("$workdir")
 
-  local stable_spec="https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json"
-  local spec_root="https://github.com/Azure/azure-rest-api-specs/tree/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks"
   local resource="Microsoft.ContainerService/managedClusters"
 
   # Step 1: Generate initial module with stable API version
-  (cd "$workdir" && "$TFMODMAKE_BIN" gen -spec "$stable_spec" -resource "$resource" >/dev/null)
+  (cd "$workdir" && "$TFMODMAKE_BIN" gen --resource "$resource" >/dev/null)
   (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
   (cd "$workdir" && terraform validate -no-color >/dev/null)
 
   # Step 2: Update to latest preview version
-  (cd "$workdir" && "$TFMODMAKE_BIN" update -spec-root "$spec_root" -include-preview -resource "$resource" >/dev/null)
+  (cd "$workdir" && "$TFMODMAKE_BIN" update --include-preview >/dev/null)
   (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
   (cd "$workdir" && terraform validate -no-color >/dev/null)
 
   echo "ok"
 }
 
+# Basic generation test
 run_case \
   "managedClusters" \
-  "https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json" \
   "Microsoft.ContainerService/managedClusters"
 
+# AVM generation test
 echo "== managedEnvironments (gen avm) =="
 workdir="$(mktemp -d -t tfmodmake_example.XXXXXX)"
 WORKDIRS+=("$workdir")
 (cd "$workdir" && "$TFMODMAKE_BIN" gen avm \
-  -spec-root "https://github.com/Azure/azure-rest-api-specs/tree/main/specification/app/resource-manager/Microsoft.App/ContainerApps" \
-  -include-preview \
-  -resource Microsoft.App/managedEnvironments >/dev/null)
+  --resource Microsoft.App/managedEnvironments \
+  --include-preview >/dev/null)
 (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
 (cd "$workdir" && terraform validate -no-color >/dev/null)
 echo "ok"
 
+# KeyVault with submodule test
 run_keyvault_case
 
+# Update flow test
 run_update_case
