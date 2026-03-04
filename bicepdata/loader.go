@@ -112,7 +112,10 @@ func (lr *LoadedResource) ResolveType(ref types.ITypeReference) (types.Type, err
 	}
 }
 
-// resolveLatestVersion finds the latest stable (or preview if includePreview) API version for a resource type.
+// resolveLatestVersion finds the latest API version for a resource type.
+// When includePreview is false, only stable versions are considered.
+// When includePreview is true, both stable and preview versions are compared
+// and the overall latest (by lexicographic sort) is returned.
 func resolveLatestVersion(idx *index.TypeIndex, resourceType string, includePreview bool) (string, error) {
 	versions := ListVersions(idx, resourceType)
 	if len(versions) == 0 {
@@ -133,12 +136,26 @@ func resolveLatestVersion(idx *index.TypeIndex, resourceType string, includePrev
 	sort.Sort(sort.Reverse(sort.StringSlice(stable)))
 	sort.Sort(sort.Reverse(sort.StringSlice(preview)))
 
-	if len(stable) > 0 {
-		return stable[0], nil
+	if includePreview {
+		// Compare latest stable and latest preview, return whichever is newer.
+		// API versions are date-based (YYYY-MM-DD[-preview]) so lexicographic
+		// comparison works correctly.
+		var candidates []string
+		if len(stable) > 0 {
+			candidates = append(candidates, stable[0])
+		}
+		if len(preview) > 0 {
+			candidates = append(candidates, preview[0])
+		}
+		if len(candidates) == 0 {
+			return "", fmt.Errorf("no API versions found for resource type %s", resourceType)
+		}
+		sort.Sort(sort.Reverse(sort.StringSlice(candidates)))
+		return candidates[0], nil
 	}
 
-	if includePreview && len(preview) > 0 {
-		return preview[0], nil
+	if len(stable) > 0 {
+		return stable[0], nil
 	}
 
 	if len(preview) > 0 {

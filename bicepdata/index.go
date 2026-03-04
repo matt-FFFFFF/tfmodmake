@@ -10,12 +10,81 @@ import (
 )
 
 // ParseIndex parses raw index.json data into a TypeIndex.
+//
+// The upstream bicep-types-go UnmarshalJSON expects resourceFunctions to be
+// map[string]map[string]map[string]ref (3-level map with function names as keys),
+// but the real bicep-types-az index.json uses map[string]map[string][]ref
+// (the innermost level is an array, not a named map). We work around this by
+// parsing the resources field ourselves and ignoring resourceFunctions (which
+// we don't use).
 func ParseIndex(data []byte) (*index.TypeIndex, error) {
-	idx := index.NewTypeIndex()
-	if err := json.Unmarshal(data, idx); err != nil {
+	var raw struct {
+		Resources map[string]json.RawMessage `json:"resources,omitempty"`
+		Settings  json.RawMessage            `json:"settings,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing index.json: %w", err)
 	}
+
+	idx := index.NewTypeIndex()
+
+	for key, refData := range raw.Resources {
+		parts := strings.SplitN(key, "@", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		resourceType := parts[0]
+		apiVersion := parts[1]
+
+		ref, err := unmarshalITypeReference(refData)
+		if err != nil {
+			return nil, fmt.Errorf("parsing reference for %s: %w", key, err)
+		}
+
+		idx.AddResource(resourceType, apiVersion, ref)
+	}
+
 	return idx, nil
+}
+
+// unmarshalITypeReference parses a JSON-encoded type reference into an ITypeReference.
+// It handles both CrossFileTypeReference (with $ref containing "filename#/index")
+// and plain TypeReference (with just an index).
+func unmarshalITypeReference(data []byte) (types.ITypeReference, error) {
+	var temp map[string]interface{}
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return nil, err
+	}
+
+	// CrossFileTypeReference has a relativePath field
+	if _, hasRelativePath := temp["relativePath"]; hasRelativePath {
+		var ref types.CrossFileTypeReference
+		if err := json.Unmarshal(data, &ref); err != nil {
+			return nil, err
+		}
+		return ref, nil
+	}
+
+	// CrossFileTypeReference via $ref "filename#/index" pattern
+	if refVal, hasRef := temp["$ref"]; hasRef {
+		if refStr, ok := refVal.(string); ok && strings.Contains(refStr, "#/") {
+			parts := strings.SplitN(refStr, "#/", 2)
+			if len(parts) == 2 && parts[0] != "" {
+				var ref types.CrossFileTypeReference
+				if err := json.Unmarshal(data, &ref); err != nil {
+					return nil, err
+				}
+				return ref, nil
+			}
+		}
+	}
+
+	// Plain TypeReference
+	var ref types.TypeReference
+	if err := json.Unmarshal(data, &ref); err != nil {
+		return nil, err
+	}
+	return ref, nil
 }
 
 // LookupResource finds the types.json file path and type index for a given resource type and API version.

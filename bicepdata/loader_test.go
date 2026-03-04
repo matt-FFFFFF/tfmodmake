@@ -192,11 +192,13 @@ func TestResolveLatestVersion_MixedStableAndPreview(t *testing.T) {
 	idx.AddResource("Microsoft.App/containerApps", "2024-01-01-preview",
 		&types.CrossFileTypeReference{Ref: 3})
 
-	// When stable versions exist, the latest stable is returned regardless of includePreview
+	// When includePreview is true, the overall latest version is returned
+	// (preview 2025-06-01-preview > stable 2025-01-01).
 	version, err := resolveLatestVersion(idx, "Microsoft.App/containerApps", true)
 	require.NoError(t, err)
-	assert.Equal(t, "2025-01-01", version)
+	assert.Equal(t, "2025-06-01-preview", version)
 
+	// When includePreview is false, the latest stable version is returned.
 	version, err = resolveLatestVersion(idx, "Microsoft.App/containerApps", false)
 	require.NoError(t, err)
 	assert.Equal(t, "2025-01-01", version)
