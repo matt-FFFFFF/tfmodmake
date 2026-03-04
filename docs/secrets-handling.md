@@ -2,42 +2,34 @@
 
 ## Overview
 
-tfmodmake implements comprehensive secrets handling for Azure OpenAPI specifications that mark sensitive fields using the `x-ms-secret` extension. This document explains how secrets are detected, surfaced as ephemeral variables, and integrated with AzAPI's `sensitive_body` and versioning mechanisms.
+tfmodmake implements comprehensive secrets handling for Azure bicep-types-az resource definitions that mark sensitive fields. This document explains how secrets are detected, surfaced as ephemeral variables, and integrated with AzAPI's `sensitive_body` and versioning mechanisms.
 
 ## What are Secret Fields?
 
-In Azure OpenAPI specifications, sensitive fields like passwords, connection strings, and API keys are marked with the `x-ms-secret: true` extension. These fields require special handling to:
+In Azure bicep-types-az resource definitions, sensitive fields like passwords, connection strings, and API keys are identified by `StringType.Sensitive = true` (or `ObjectType.Sensitive` for object types). These fields require special handling to:
 
 - Prevent accidental exposure in logs and state files
 - Support lifecycle management through versioning
 - Enable secure passing of sensitive values through Terraform
 
-Note: some real-world Azure specs do not consistently mark secrets with `x-ms-secret`. In a small number of cases, `tfmodmake` falls back to additional signals (e.g., `writeOnly` or specific description phrasing) to keep secrets out of `body`. This is considered a spec-quality smell and is tracked in [rest-api-issues.md](rest-api-issues.md).
+Note: detection also considers the `WriteOnly` flag on properties (`ObjectTypeProperty.Flags & WriteOnly`), which provides an additional signal that a property should not appear in state.
 
 ### Example
 
-```json
-{
-  "properties": {
-    "connectionString": {
-      "type": "string",
-      "description": "Application Insights connection string",
-      "x-ms-secret": true
-    },
-    "apiKey": {
-      "type": "string", 
-      "description": "API key for external service",
-      "x-ms-secret": true
-    }
-  }
+```go
+// In bicep-types, sensitive strings have Sensitive = true
+&types.StringType{
+    Sensitive: true,
 }
+// Properties also have WriteOnly flag
+// ObjectTypeProperty.Flags & TypePropertyFlagsWriteOnly != 0
 ```
 
 ## Detection and Collection
 
 ### Recursive Schema Traversal
 
-The `collectSecretFields` function traverses the OpenAPI schema recursively to detect all fields marked with `x-ms-secret: true`:
+The `collectSecretFields` function traverses the resource schema recursively to detect all fields marked as sensitive (`prop.Sensitive || prop.WriteOnly`):
 
 - **Root-level properties**: Direct properties in the schema
 - **Nested objects**: Properties within complex object types
@@ -45,30 +37,28 @@ The `collectSecretFields` function traverses the OpenAPI schema recursively to d
 - **Deep nesting**: Recursively processes all levels
 
 Example schema structure:
-```json
-{
-  "properties": {
-    "daprConfig": {
-      "type": "object",
-      "properties": {
-        "aiConnectionString": {
-          "type": "string",
-          "x-ms-secret": true
-        }
-      }
-    }
-  }
-}
+```go
+// A resource schema with a nested sensitive property:
+// daprConfig.aiConnectionString has Sensitive: true
+// This would detect the secret at path properties.daprConfig.aiConnectionString
 ```
 
 This would detect the secret at path `properties.daprConfig.aiConnectionString`.
+
+### Function Signature
+
+```go
+func collectSecretFields(rs *schema.ResourceSchema) []secretField
+```
+
+The function takes a `schema.ResourceSchema` and returns a slice of detected secret fields (no error return; the resource schema is pre-validated).
 
 ### Path Tracking
 
 Each detected secret includes:
 - **path**: JSON path to the field (e.g., `properties.daprAIInstrumentationKey`)
 - **varName**: Snake-case Terraform variable name (e.g., `dapr_ai_instrumentation_key`)
-- **schema**: The OpenAPI schema for type mapping and validation
+- **prop**: The `*schema.Property` for type mapping and validation
 
 ## Generated Terraform Artifacts
 
@@ -76,16 +66,9 @@ Each detected secret includes:
 
 Secret fields are generated as **ephemeral variables** in `variables.tf` with `ephemeral = true`. This leverages Terraform 1.10+ ephemeral values feature to prevent secrets from being persisted in state.
 
-**OpenAPI:**
-```json
-{
-  "connectionString": {
-    "type": "string",
-    "description": "Application Insights connection string",
-    "x-ms-secret": true
-  }
-}
-```
+**Bicep-types input:**
+
+A `connectionString` property with `StringType.Sensitive = true` and description "Application Insights connection string".
 
 **Generated variables.tf:**
 ```hcl
@@ -230,20 +213,8 @@ Generated:
 Secrets are **always surfaced as top-level variables**, even when deeply nested in the schema:
 
 **Schema:**
-```json
-{
-  "properties": {
-    "daprConfig": {
-      "type": "object",
-      "properties": {
-        "aiConnectionString": {
-          "x-ms-secret": true
-        }
-      }
-    }
-  }
-}
-```
+
+A resource where `daprConfig` is an object property containing `aiConnectionString` with `Sensitive: true`.
 
 **Generated variables** (not nested):
 ```hcl
@@ -311,35 +282,13 @@ The AzAPI provider must support ephemeral inputs for `sensitive_body`. Check pro
 
 ## Real-World Example: Azure Container App Environment
 
-### OpenAPI Specification
+### Bicep-types Resource Definition
 
-```json
-{
-  "Microsoft.App/managedEnvironments": {
-    "properties": {
-      "daprAIInstrumentationKey": {
-        "type": "string",
-        "description": "Application Insights instrumentation key for Dapr",
-        "x-ms-secret": true
-      },
-      "daprAIConnectionString": {
-        "type": "string", 
-        "description": "Application Insights connection string for Dapr",
-        "x-ms-secret": true
-      },
-      "workloadProfiles": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "properties": {
-            "name": {"type": "string"}
-          }
-        }
-      }
-    }
-  }
-}
-```
+The `Microsoft.App/managedEnvironments@2024-03-01` resource type has the following property characteristics:
+
+- `daprAIInstrumentationKey`: `string`, `Sensitive: true` — "Application Insights instrumentation key for Dapr"
+- `daprAIConnectionString`: `string`, `Sensitive: true` — "Application Insights connection string for Dapr"
+- `workloadProfiles`: `array` of objects with property `name: string` (not sensitive)
 
 ### Generated Code
 
@@ -495,19 +444,12 @@ Tests that:
 ### TestIsSecretField
 
 Tests that:
-- ✅ Fields with `x-ms-secret: true` are detected
-- ✅ Fields without the extension are ignored
-- ✅ Invalid extension values (non-boolean) are handled
-- ✅ Nil schemas don't cause panics
+- ✅ Fields with `Sensitive: true` are detected
+- ✅ Fields with `WriteOnly` flag are detected
+- ✅ Fields without sensitive or write-only markers are ignored
+- ✅ Nil properties don't cause panics
 
 ## Integration with Other Features
-
-### allOf Handling
-
-Secrets detection works seamlessly with `allOf` schema composition:
-- Schemas are flattened before secret collection
-- Secrets in base types are detected
-- Merged properties are checked for `x-ms-secret`
 
 ### Validations
 
@@ -518,7 +460,7 @@ Secret variables receive the same validation generation as regular variables:
 
 ### Read-Only Properties
 
-Fields marked as both `readOnly: true` and `x-ms-secret: true` are ignored (they cannot be set by users).
+Fields marked as both read-only and sensitive are ignored (they cannot be set by users).
 
 ## Error Handling
 
@@ -539,10 +481,6 @@ Error: When connection_string is set, connection_string_version must also be set
 ```
 
 Resolution: Always provide the version variable when providing a secret.
-
-### Invalid x-ms-secret Value
-
-Non-boolean values for `x-ms-secret` are silently ignored (treated as false). This prevents generation errors for malformed specs.
 
 ## Future Enhancements
 

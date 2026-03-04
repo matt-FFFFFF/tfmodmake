@@ -2,26 +2,26 @@
 
 ## Overview
 
-tfmodmake generates Terraform AzureRM modules from Azure OpenAPI specifications. This document captures key architectural decisions and their rationale.
+tfmodmake generates Terraform AzureRM modules from Azure resource type definitions (via bicep-types-az). This document captures key architectural decisions and their rationale.
 
 ---
 
 ## Core Architecture
 
-### OpenAPI as Source of Truth
+### bicep-types-az as Source of Truth
 
-**Decision:** Generate all Terraform code from OpenAPI specs rather than handwriting modules.
+**Decision:** Generate all Terraform code from bicep-types-az resource definitions rather than raw OpenAPI specs or handwriting modules.
 
 **Rationale:**
 
-- Azure REST API specs are the authoritative source for resource schemas
-- Automatic schema discovery eliminates manual documentation parsing
-- Updates to Azure APIs automatically flow through to Terraform modules
-- Reduces human error in schema translation
+- Azure bicep-types-az provides pre-generated, strongly-typed resource definitions derived from Azure REST API specs
+- All references are pre-resolved, allOf merged, and metadata normalized
+- No need for complex OpenAPI parsing, allOf merging, or $ref resolution
+- Zero external dependencies from the bicep-types-go library
 
 **Trade-offs:**
 
-- OpenAPI specs are incomplete - this misses knowledge acrued in other providers
+- bicep-types has slightly less constraint information than raw OpenAPI (no multipleOf, uniqueItems, UUID format), but the tradeoff is worth it for the massive simplification
 - Generated code may need post-processing for edge cases
 - Dependent on Azure's spec quality and update cadence
 
@@ -29,10 +29,11 @@ tfmodmake generates Terraform AzureRM modules from Azure OpenAPI specifications.
 
 ### Package Structure
 
-**Decision:** Public packages (`openapi`, `terraform`, `hclgen`, `naming`, `specs`, `submodule`) with CLI in `cmd/tfmodmake`.
+**Decision:** Public packages (`bicepdata`, `schema`, `terraform`, `hclgen`, `naming`, `submodule`) with CLI in `cmd/tfmodmake`.
 
 **Rationale:**
 
+- `bicepdata` downloads and caches bicep-types-az type files; `schema` converts bicep types to internal representation
 - Enables external use (e.g., MCP server integration, programmatic usage)
 - Clear separation between library functionality and CLI concerns
 - Follows Go community conventions for reusable code
@@ -54,7 +55,7 @@ tfmodmake generates Terraform AzureRM modules from Azure OpenAPI specifications.
 **Pattern:**
 
 ```text
-variables.tf  → User-facing inputs (flattened from OpenAPI schema)
+variables.tf  → User-facing inputs (flattened from resource type schema)
 locals.tf     → Internal transformations (nested structure reconstruction)
 main.tf       → Resource definitions (azapi_resource blocks)
 outputs.tf    → Exported values
@@ -65,7 +66,7 @@ terraform.tf  → Provider requirements
 
 ### Schema Flattening & Reconstruction
 
-**Decision:** Flatten nested OpenAPI properties into top-level variables, then reconstruct in locals.
+**Decision:** Flatten nested resource type properties into top-level variables, then reconstruct in locals.
 
 **Rationale:**
 
@@ -107,7 +108,7 @@ locals {
 - `null` defaults prevent accidental secret exposure
 - Users must explicitly provide secrets at runtime
 
-**Detection:** Fields matching patterns like `*password*`, `*secret*`, `*key*`, etc. are marked ephemeral.
+**Detection:** Fields marked with `Sensitive = true` on `StringType`/`ObjectType` in bicep-types, or with the `WriteOnly` property flag, are marked ephemeral.
 
 ---
 
@@ -151,22 +152,22 @@ Investigation of real OpenAPI specs vs ARM platform capabilities revealed:
 - **Spec limitations**: Individual resource specs don't declare cross-cutting ARM concerns
 - **User control**: AVM utility module is input-driven; unused variables cause no harm
 
-**Implementation:** `openapi.DetectInterfaceCapabilities()` with `isChild` parameter to apply different defaults.
+**Implementation:** `SupportsManagedIdentity` is set from `ResourceSchema.SupportsIdentity` (detected by `schema.detectSupportsIdentity()`). Private endpoints and CMK detection have been de-prioritised (always false currently). The `isChild` parameter applies different ARM platform defaults.
 
 ---
 
 ### Child Resource Discovery
 
-**Decision:** Programmatically discover child resources from OpenAPI specs using path analysis.
+**Decision:** Programmatically discover child resources from bicep-types-az index using resource type hierarchy.
 
 **Rationale:**
 
-- Azure resource hierarchy is encoded in API paths
+- Azure resource hierarchy is encoded in resource type names
 - Manual maintenance of child resource lists is error-prone
 - Enables automatic submodule scaffolding
 - Supports AVM's parent-child module pattern
 
-**Pattern:** Paths like `/Microsoft.App/managedEnvironments/{name}/storages/{storageName}` indicate `storages` is a child of `managedEnvironments`.
+**Pattern:** Discovery uses `bicepdata.FetchIndex()` + `schema.DiscoverChildren()` to find child types. For example, `Microsoft.App/managedEnvironments/storages` is discovered as a child of `Microsoft.App/managedEnvironments`.
 
 ---
 
@@ -202,11 +203,11 @@ Investigation of real OpenAPI specs vs ARM platform capabilities revealed:
 
 ### CLI Design Philosophy
 
-**Decision:** Simple command-line interface using stdlib `flag` package with explicit subcommands.
+**Decision:** Simple command-line interface using `urfave/cli/v3` framework with explicit subcommands.
 
 **Rationale:**
 
-- No external dependencies for CLI (keeps binary small)
+- Structured CLI framework with built-in help generation and argument parsing
 - Explicit commands are self-documenting
 - Sufficient for current use cases (not building kubectl/docker-level complexity)
 - Easy to extend with new commands as needed
@@ -216,22 +217,23 @@ Investigation of real OpenAPI specs vs ARM platform capabilities revealed:
 - `gen` - Generate base module
 - `gen submodule` - Generate child module
 - `discover children` - Find child resource types
+- `discover versions` - List available API versions for a resource type
 - `gen avm` - Orchestrate full AVM module with submodules
+- `update` - Update cached bicep-types-az data
 
 ---
 
-### Spec Resolution Strategy
+### Resource Type Resolution
 
-**Decision:** Support local files, URLs, and GitHub tree discovery with glob patterns.
+**Decision:** Download bicep-types-az index.json at runtime; resolve resource types and API versions from the index.
 
 **Rationale:**
 
-- Developers need flexibility in spec sources
-- Azure specs are in GitHub (azure-rest-api-specs repo)
-- Multiple API versions exist; users need to choose
-- Discovery mode helps find related specs automatically
+- Single authoritative index of all Azure resource types and API versions
+- No need to navigate GitHub tree structures or discover spec files
+- Supports offline/CI use via local filesystem fallback
 
-**Pattern:** Users provide seeds (`-spec` or `-spec-root`), resolver finds all matching specs, generation code tries each until resource found.
+**Pattern:** Users provide `--resource` type and optionally `--api-version`; if no version specified, latest stable is resolved automatically. `--include-preview` allows preview versions. Local filesystem fallback supported for offline/CI use.
 
 ---
 
@@ -240,10 +242,10 @@ Investigation of real OpenAPI specs vs ARM platform capabilities revealed:
 1. **Generated code should be idiomatic** - Output should look hand-written
 2. **Fail fast with clear errors** - Don't proceed with invalid schemas
 3. **AVM compliance by default** - Follow Azure Verified Modules patterns
-4. **Minimal dependencies** - Only essential libraries (OpenAPI parser, HCL writer)
+4. **Minimal dependencies** - Only essential libraries (bicep-types-go, HCL writer)
 5. **Composable packages** - Each package has single, clear responsibility
 6. **Explicit over implicit** - Prefer verbose clarity to magic behavior
-7. **Schema-only validations** - Generate validations only from declarative schema constraints, not cross-field semantic rules (see [rest-api-issues.md](docs/rest-api-issues.md#cross-field-semantic-constraints-not-expressible-in-openapi))
+7. **Schema-only validations** - Generate validations only from declarative schema constraints, not cross-field semantic rules
 
 ---
 
@@ -258,7 +260,6 @@ Investigation of real OpenAPI specs vs ARM platform capabilities revealed:
 
 ### Potential Extensions
 
-- **Bicep support** - Similar generation for Bicep modules
 - **Validation rules** - Deeper schema constraint enforcement
 - **Testing scaffolds** - Generate test fixtures from examples
 - **Documentation generation** - Auto-generate README from schema
@@ -269,5 +270,6 @@ Investigation of real OpenAPI specs vs ARM platform capabilities revealed:
 
 - [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/)
 - [Azure REST API Specs](https://github.com/Azure/azure-rest-api-specs)
-- [OpenAPI 3.0 Specification](https://swagger.io/specification/)
+- [Azure bicep-types-az](https://github.com/Azure/bicep-types-az)
+- [bicep-types-go](https://github.com/Azure/bicep-types) (Go module under `src/bicep-types-go`)
 - [Terraform Module Conventions](https://www.terraform.io/docs/language/modules/develop/structure.html)

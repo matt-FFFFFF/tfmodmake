@@ -2,14 +2,16 @@
 
 ## Executive Summary
 
-The original design assumed we could detect all AVM interface support from OpenAPI specs. Investigation reveals:
+The original design assumed we could detect all AVM interface support from OpenAPI specs. After migrating to bicep-types-az resource definitions, the investigation reveals:
 
-- ✅ **Private Endpoints**: Reliably detectable from specs
-- ❌ **Diagnostic Settings**: Not in specs (generic ARM capability)
-- ❌ **Locks**: Not in specs (universal ARM capability)
-- ❌ **Role Assignments**: Not in specs (universal ARM capability)  
-- ⚠️ **Customer-Managed Keys**: Heuristically detectable (false negatives acceptable)- ✅ **Managed Identities**: Reliably detectable from specs (mostly for parents)
-**Conclusion**: Use hybrid approach combining spec-based detection with ARM platform defaults.
+- ❌ **Private Endpoints**: Detection removed (de-prioritised — requires path analysis not available in bicep-types)
+- ❌ **Diagnostic Settings**: Not in resource definitions (generic ARM capability)
+- ❌ **Locks**: Not in resource definitions (universal ARM capability)
+- ❌ **Role Assignments**: Not in resource definitions (universal ARM capability)
+- ❌ **Customer-Managed Keys**: Detection removed (de-prioritised — heuristic was unreliable)
+- ✅ **Managed Identities**: Reliably detectable from bicep-types-az resource definitions
+
+**Conclusion**: Use hybrid approach combining schema-based detection (managed identity only) with ARM platform defaults. Private endpoints and CMK detection have been de-prioritised.
 
 ---
 
@@ -24,13 +26,13 @@ Azure Verified Modules (AVM) expect modules to provide scaffolding for common Az
 - **Customer-Managed Keys** (CMK for encryption at rest)
 - **Managed Identities** (system-assigned and user-assigned identities for authentication)
 
-The question: Can we detect which interfaces a resource supports by analyzing its OpenAPI specification?
+The question: Can we detect which interfaces a resource supports by analyzing its bicep-types-az resource definition?
 
 ---
 
 ## Investigation Method
 
-1. Examined real OpenAPI specs for:
+1. Examined bicep-types-az resource definitions for:
    - `Microsoft.App/managedEnvironments` (Container Apps)
    - `Microsoft.ContainerService/managedClusters` (AKS)
    - `Microsoft.KeyVault/vaults` (Key Vault)
@@ -48,63 +50,35 @@ The question: Can we detect which interfaces a resource supports by analyzing it
 
 ### 1. Private Endpoints
 
-**OpenAPI Spec Evidence:** ✅ **STRONG**
+**Detection Status:** ❌ **REMOVED (de-prioritised)**
 
-**What we see:**
+**Background:**
 
-```json
-{
-  "paths": {
-    "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/managedEnvironments/{environmentName}/privateEndpointConnections": {
-      "get": { ... }
-    },
-    "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/managedEnvironments/{environmentName}/privateEndpointConnections/{privateEndpointConnectionName}": {
-      "get": { ... },
-      "put": { ... },
-      "delete": { ... }
-    },
-    "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/managedEnvironments/{environmentName}/privateLinkResources": {
-      "get": { ... }
-    }
-  }
-}
-```
+In the previous OpenAPI-based approach, private endpoint support was detected by scanning API paths for `/privateEndpointConnections` and `/privateLinkResources` sub-resources. This was reliable because the OpenAPI specs contained full path definitions.
 
-**Pattern:** Resources supporting Private Link expose:
+**Why detection was removed:**
+
+The migration to bicep-types-az resource definitions means we no longer have access to API path information. Bicep-types defines resource schemas (ObjectType properties) but does not expose the sub-resource path hierarchy needed for private endpoint detection.
+
+**Resources that support Private Link expose:**
 - `/privateEndpointConnections` (list and manage connections)
 - `/privateLinkResources` (discover available sub-resources)
 
-**Reliability:** Very high. Observed consistently across:
-- Container Apps Managed Environments ✅
-- AKS Managed Clusters ✅
-- Key Vault Vaults ✅
+This information is not represented in the bicep-types ObjectType structure.
 
-**Detection method:**
+**Current approach:** Private endpoint detection is **not auto-detected**. The `SupportsPrivateEndpoints` capability is always `false`. Users can manually add private endpoint scaffolding when needed, or the AVM interfaces module wiring will include the variable with a note that it is not auto-detected.
 
-```go
-func detectPrivateEndpointSupport(spec *openapi3.T, resourceType string) bool {
-    for path := range spec.Paths.Map() {
-        pathLower := strings.ToLower(path)
-        if strings.Contains(pathLower, "privateendpointconnections") ||
-           strings.Contains(pathLower, "privatelinkresources") {
-            return true
-        }
-    }
-    return false
-}
-```
-
-**Recommendation:** ✅ **Use spec-based detection**
+**Recommendation:** ❌ **Do not auto-detect** (would require a separate data source or allow-list in future)
 
 ---
 
 ### 2. Diagnostic Settings
 
-**OpenAPI Spec Evidence:** ❌ **NONE**
+**Resource Definition Evidence:** ❌ **NONE**
 
 **What we DON'T see:**
 
-No individual resource spec contains paths like:
+No individual resource definition contains paths like:
 ```
 /{resourceId}/providers/Microsoft.Insights/diagnosticSettings
 ```
@@ -116,7 +90,7 @@ No individual resource spec contains paths like:
 {resourceId}/providers/Microsoft.Insights/diagnosticSettings/{diagnosticSettingName}
 ```
 
-This works on the resource ID of nearly any ARM resource without being declared in that resource's spec.
+This works on the resource ID of nearly any ARM resource without being declared in that resource's definition.
 
 **Which resources support it?**
 
@@ -149,7 +123,7 @@ For child resources: Use heuristic to determine if independently monitorable (or
 
 ### 3. Locks
 
-**OpenAPI Spec Evidence:** ❌ **NONE**
+**Resource Definition Evidence:** ❌ **NONE**
 
 **Why:** Locks are managed by `Microsoft.Authorization` provider as a **universal ARM capability**.
 
@@ -188,7 +162,7 @@ lock = {
 
 ### 4. Role Assignments
 
-**OpenAPI Spec Evidence:** ❌ **NONE**
+**Resource Definition Evidence:** ❌ **NONE**
 
 **Why:** Role assignments are managed by `Microsoft.Authorization` provider as a **universal ARM capability**.
 
@@ -226,139 +200,37 @@ role_assignments = {
 
 ### 5. Customer-Managed Keys (CMK)
 
-**OpenAPI Spec Evidence:** ⚠️ **MODERATE / HEURISTIC**
+**Detection Status:** ❌ **REMOVED (de-prioritised)**
 
-**What we see:**
+**Background:**
 
-Some resource specs include encryption-related properties:
+In the previous OpenAPI-based approach, CMK support was heuristically detected by scanning request body schemas for encryption-related properties (`encryption`, `customerManagedKey`, `diskEncryption`, etc.).
 
-```json
-{
-  "definitions": {
-    "DiskEncryptionConfiguration": {
-      "type": "object",
-      "properties": {
-        "diskEncryptionKeyUrl": { "type": "string" },
-        "identity": { "$ref": "#/definitions/ManagedServiceIdentity" }
-      }
-    },
-    "ManagedEnvironmentProperties": {
-      "properties": {
-        "diskEncryption": {
-          "$ref": "#/definitions/DiskEncryptionConfiguration"
-        }
-      }
-    }
-  }
-}
-```
+**Why detection was removed:**
 
-**Challenges:**
+The heuristic detection was unreliable due to:
 
 1. **Naming variations**: `encryption`, `customerManagedKey`, `diskEncryption`, `dataEncryption`, etc.
 2. **Not always in PUT body**: Some resources configure encryption via separate operations
-3. **Platform vs customer-managed**: Specs may mention encryption without supporting CMK
+3. **Platform vs customer-managed**: Definitions may mention encryption without supporting CMK
 
-**Detection approach:**
+While it would be technically possible to apply similar heuristics to bicep-types ObjectType properties, the false positive/negative rate was deemed too high to justify the effort.
 
-```go
-func detectCustomerManagedKeySupport(spec *openapi3.T, resourceType string) bool {
-    // Search request body schemas for encryption-related properties
-    for path, pathItem := range spec.Paths.Map() {
-        if pathItem.Put == nil { continue }
-        
-        schema := extractRequestBodySchema(pathItem.Put)
-        if hasEncryptionProperty(schema) {
-            return true
-        }
-    }
-    return false
-}
+**Current approach:** CMK detection is **not auto-detected**. The `SupportsCustomerManagedKey` capability is always `false`. Users can manually add CMK scaffolding when needed.
 
-func hasEncryptionProperty(schema *openapi3.Schema) bool {
-    props, _ := GetEffectiveProperties(schema)
-    for name, propRef := range props {
-        nameLower := strings.ToLower(name)
-        if nameLower == "encryption" || 
-           nameLower == "customermanagedkey" ||
-           strings.Contains(nameLower, "encryptionkey") {
-            return true
-        }
-        // Recurse into nested properties object
-        if name == "properties" {
-            if hasEncryptionProperty(propRef.Value) {
-                return true
-            }
-        }
-    }
-    return false
-}
-```
-
-**Observed results:**
-
-- Container Apps Managed Environments: ✅ Detected (`diskEncryption`)
-- AKS Managed Clusters: ⚠️ May be detected (has disk encryption options)
-- Key Vault: ❌ Not detected (KV manages keys, doesn't use CMK itself)
-
-**Recommendation:** ⚠️ **Use heuristic detection, accept false negatives**
-
-CMK is an opt-in security feature. Conservative detection (only when clearly indicated) is appropriate. Users can manually add CMK variables if needed.
+**Recommendation:** ❌ **Do not auto-detect** (heuristic was unreliable, manual override preferred)
 
 ---
 
 ### 6. Managed Identities
 
-**OpenAPI Spec Evidence:** ✅ **STRONG**
+**bicep-types-az Evidence:** ✅ **STRONG**
 
 **What we see:**
 
-```json
-{
-  "definitions": {
-    "ManagedEnvironment": {
-      "properties": {
-        "identity": {
-          "description": "Managed identities for the Managed Environment to interact with other Azure services without maintaining any secrets or credentials in code.",
-          "$ref": "../../../../../../common-types/resource-management/v5/managedidentity.json#/definitions/ManagedServiceIdentity"
-        }
-      }
-    }
-  }
-}
-```
+In the bicep-types-az resource definitions, resources that support managed identity have an `identity` property at the top level of their ObjectType. This property contains child properties including `type` (the identity type enum) and `userAssignedIdentities`.
 
-**Common type definition:**
-
-```json
-{
-  "ManagedServiceIdentity": {
-    "type": "object",
-    "description": "Managed service identity (system assigned and/or user assigned identities)",
-    "properties": {
-      "principalId": {
-        "type": "string",
-        "format": "uuid",
-        "readOnly": true
-      },
-      "tenantId": {
-        "type": "string",
-        "format": "uuid",
-        "readOnly": true  
-      },
-      "type": {
-        "$ref": "#/definitions/ManagedServiceIdentityType"
-      },
-      "userAssignedIdentities": {
-        "$ref": "#/definitions/UserAssignedIdentities"
-      }
-    },
-    "required": ["type"]
-  }
-}
-```
-
-**Pattern:** Resources supporting managed identity have an `identity` property at the top level of their schema.
+**Pattern:** Resources supporting managed identity have a writable `identity` property with writable `type` or `userAssignedIdentities` children in the bicep-types ObjectType definition.
 
 **Reliability:** Very high. Observed consistently across:
 - Container Apps Managed Environments ✅
@@ -402,32 +274,40 @@ managed_identities = {
 
 **Detection method:**
 
-```go
-func detectManagedIdentitySupport(spec *openapi3.T, resourceType string) bool {
-    // Look for "identity" property in PUT request body schema
-    for path, pathItem := range spec.Paths.Map() {
-        if pathItem.Put != nil && matchesResourceType(path, resourceType) {
-            schema := extractRequestBodySchema(pathItem.Put)
-            if hasIdentityProperty(schema) {
-                return true
-            }
-        }
-    }
-    return false
-}
+Detection is implemented in `schema/convert.go` via `detectSupportsIdentity()`, which runs during resource schema conversion from bicep-types-az:
 
-func hasIdentityProperty(schema *openapi3.Schema) bool {
-    props, _ := GetEffectiveProperties(schema)
-    for name := range props {
-        if strings.ToLower(name) == "identity" {
-            return true
-        }
+```go
+// detectSupportsIdentity checks if the resource supports managed identity configuration.
+// This looks for writable "identity.type" or "identity.userAssignedIdentities" properties.
+func detectSupportsIdentity(rs *ResourceSchema) bool {
+    identityProp, ok := rs.Properties["identity"]
+    if !ok || identityProp.ReadOnly {
+        return false
     }
+
+    if identityProp.Children == nil {
+        return false
+    }
+
+    // Check for writable "type" sub-property
+    typeProp, hasType := identityProp.Children["type"]
+    if hasType && !typeProp.ReadOnly {
+        return true
+    }
+
+    // Check for writable "userAssignedIdentities" sub-property
+    uaiProp, hasUAI := identityProp.Children["userAssignedIdentities"]
+    if hasUAI && !uaiProp.ReadOnly {
+        return true
+    }
+
     return false
 }
 ```
 
-**Recommendation:** ✅ **Use spec-based detection** (high confidence, mostly for parent resources)
+The result is stored in `ResourceSchema.SupportsIdentity` and consumed by the generator via `terraform.SupportsIdentity()`.
+
+**Recommendation:** ✅ **Use schema-based detection** (high confidence, mostly for parent resources)
 
 ---
 
@@ -444,12 +324,14 @@ The `terraform-azure-avm-utl-interfaces` module:
 - `private_endpoints = {}` - Map of private endpoint configurations
 - `customer_managed_key = null` - Customer managed key configuration
 - `lock = null` - Lock configuration
-- `role_assignments = {}` - Map of role assignment configurations- `managed_identities = {}` - Managed identity configuration (system-assigned and/or user-assigned)
+- `role_assignments = {}` - Map of role assignment configurations
+- `managed_identities = {}` - Managed identity configuration (system-assigned and/or user-assigned)
+
 **Key insight:** The module is **input-driven**. It generates resources only for variables that are provided. Unused variables cause no harm.
 
 ---
 
-## Comparison: Specs vs azurerm Provider
+## Comparison: bicep-types-az vs azurerm Provider
 
 ### What azurerm Knows
 
@@ -461,7 +343,7 @@ The azurerm provider doesn't explicitly advertise interface support in resource 
 4. **Role Assignments**: Works on all resources via `azurerm_role_assignment`
 5. **CMK**: Resource-specific schema properties when supported
 
-The provider relies on ARM platform behavior and manual mapping, not spec-driven discovery.
+The provider relies on ARM platform behavior and manual mapping, not definition-driven discovery.
 
 ---
 
@@ -469,16 +351,16 @@ The provider relies on ARM platform behavior and manual mapping, not spec-driven
 
 ### Parent Resources (Top-Level Resources)
 
-**Default Position:** **ENABLE ALL EXCEPT CMK** (unless detected)
+**Default Position:** **ENABLE ALL EXCEPT PE AND CMK** (unless manually overridden)
 
 | Interface | Detection Strategy | Default | Rationale |
 |-----------|-------------------|---------|-----------|
-| **Private Endpoints** | ✅ Detect from spec paths | Generate if detected | High reliability, few false positives |
+| **Private Endpoints** | ❌ Not auto-detected | Do not generate | Detection removed (requires path analysis not in bicep-types) |
 | **Diagnostic Settings** | ❌ Cannot detect | ✅ **ALWAYS generate** | Works on 95%+ of ARM resources, over-generation acceptable |
 | **Locks** | ❌ Cannot detect | ✅ **ALWAYS generate** | Universal ARM capability, no false positives |
 | **Role Assignments** | ❌ Cannot detect | ✅ **ALWAYS generate** | Universal ARM capability, no false positives |
-| **Customer-Managed Keys** | ⚠️ Heuristic detection | Generate only if detected | Opt-in feature, false negatives acceptable |
-| **Managed Identities** | ✅ Detect from spec schema | Generate if detected | Part of core resource, reliably detectable |
+| **Customer-Managed Keys** | ❌ Not auto-detected | Do not generate | Detection removed (heuristic unreliable) |
+| **Managed Identities** | ✅ Detect from schema | Generate if detected | Part of core resource, reliably detectable from bicep-types |
 
 **Benefits:**
 - Modules work out-of-box for most common scenarios
@@ -493,12 +375,12 @@ The provider relies on ARM platform behavior and manual mapping, not spec-driven
 
 | Interface | Detection Strategy | Default | Rationale |
 |-----------|-------------------|---------|-----------|
-| **Private Endpoints** | ✅ Detect from spec paths | Generate if detected | Rare for children but possible |
+| **Private Endpoints** | ❌ Not auto-detected | Do not generate | Detection removed; rare for children anyway |
 | **Diagnostic Settings** | ❌ Cannot detect | ⚠️ **CONDITIONAL** | Many children don't emit independent logs |
 | **Locks** | ❌ Cannot detect | ✅ **ALWAYS generate** | Can lock individual child resources |
 | **Role Assignments** | ❌ Cannot detect | ✅ **ALWAYS generate** | RBAC applies to children |
-| **Customer-Managed Keys** | ⚠️ Heuristic detection | Generate only if detected | Rare for child resources |
-| **Managed Identities** | ✅ Detect from spec schema | Generate only if detected | Very rare for children, parent provides auth context |
+| **Customer-Managed Keys** | ❌ Not auto-detected | Do not generate | Detection removed; rare for child resources |
+| **Managed Identities** | ✅ Detect from schema | Generate only if detected | Very rare for children, parent provides auth context |
 
 **Diagnostic Settings considerations for children:**
 
@@ -517,52 +399,58 @@ Most child resources don't emit independent diagnostic logs (parent aggregates t
 ### Code Structure
 
 ```go
-// InterfaceCapabilities represents which AVM interfaces should be generated
+// InterfaceCapabilities represents which AVM interface scaffolding should be generated.
+// Defined in terraform/generator.go
 type InterfaceCapabilities struct {
     SupportsPrivateEndpoints   bool
     SupportsDiagnostics        bool
     SupportsCustomerManagedKey bool
     SupportsManagedIdentity    bool
-    SupportsLocks              bool
-    SupportsRoleAssignments    bool
-}
-
-// DetectInterfaceCapabilities analyzes spec and applies ARM platform defaults
-func DetectInterfaceCapabilities(spec *openapi3.T, resourceType string, isChild bool) InterfaceCapabilities {
-    caps := InterfaceCapabilities{
-        // Spec-based detection
-        SupportsPrivateEndpoints:   detectPrivateEndpointSupport(spec, resourceType),
-        SupportsCustomerManagedKey: detectCustomerManagedKeySupport(spec, resourceType),
-        SupportsManagedIdentity:    detectManagedIdentitySupport(spec, resourceType),
-        
-        // ARM platform defaults
-        SupportsLocks:             true, // Universal capability
-        SupportsRoleAssignments:   true, // Universal capability
-    }
-    
-    // Diagnostic settings: different defaults for parents vs children
-    if isChild {
-        // Conservative for children - could use heuristic or always true
-        caps.SupportsDiagnostics = true  // With clear documentation
-    } else {
-        // Always true for parent resources
-        caps.SupportsDiagnostics = true
-    }
-    
-    return caps
 }
 ```
+
+Interface capabilities are built from the `schema.ResourceSchema` during generation.
+Only `SupportsManagedIdentity` is currently auto-detected; the other three fields default to `false`:
+
+```go
+// In terraform/generator.go — generateWithOpts()
+func generateWithOpts(o *generatorOptions) error {
+    supportsIdentity := SupportsIdentity(o.schema) // reads rs.SupportsIdentity
+
+    // Build interface capabilities from schema
+    caps := InterfaceCapabilities{
+        SupportsManagedIdentity: supportsIdentity,
+        // SupportsPrivateEndpoints, SupportsDiagnostics, SupportsCustomerManagedKey
+        // are not auto-detected and default to false.
+    }
+    // ...
+}
+
+// SupportsIdentity reports whether the schema supports configuring managed identity.
+func SupportsIdentity(rs *schema.ResourceSchema) bool {
+    return rs != nil && rs.SupportsIdentity
+}
+```
+
+The identity detection itself lives in `schema/convert.go` and runs at schema conversion time:
+
+```go
+// In schema/convert.go — called during ConvertResource()
+rs.SupportsIdentity = detectSupportsIdentity(rs)
+```
+
+See the [Managed Identities](#6-managed-identities) section above for the full `detectSupportsIdentity()` implementation.
 
 ### CLI Flags (Future)
 
 Allow users to override detection:
 
 ```bash
-tfmodmake gen avm \
-  -resource Microsoft.App/managedEnvironments \
+tfmodmake gen avm Microsoft.App/managedEnvironments \
   --force-diagnostics    # Override: always generate
   --skip-diagnostics     # Override: never generate
   --force-cmk            # Override: generate even if not detected
+  --force-pe             # Override: generate private endpoint scaffolding
 ```
 
 ---
@@ -571,7 +459,7 @@ tfmodmake gen avm \
 
 ### 1. Diagnostic Log Categories
 
-**Problem:** Specs don't tell us which log categories a resource supports.
+**Problem:** Resource definitions don't tell us which log categories a resource supports.
 
 **Solution:** Let users provide category names. AVM utility module handles validation at runtime via Azure API.
 
@@ -588,39 +476,9 @@ diagnostic_settings = {
 
 ### 2. Private Endpoint Sub-Resources
 
-**Problem:** Some resources support Private Endpoints on multiple sub-resources.
+**Problem:** Some resources support Private Endpoints on multiple sub-resources (e.g., Storage Account supports `blob`, `file`, `queue`, `table`).
 
-Example: Storage Account supports:
-- `blob` - Blob storage endpoint
-- `file` - File storage endpoint
-- `queue` - Queue storage endpoint
-- `table` - Table storage endpoint
-
-**What specs show:**
-
-```json
-{
-  "paths": {
-    "/{resourceId}/privateLinkResources": {
-      "get": {
-        "responses": {
-          "200": {
-            "schema": {
-              "value": [
-                { "properties": { "groupId": "blob" } },
-                { "properties": { "groupId": "file" } },
-                ...
-              ]
-            }
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-**Solution:** Generate generic private endpoint scaffolding. Users specify `subresource_names` in variable:
+Since private endpoint detection has been de-prioritised, this is deferred to a future enhancement. When private endpoint scaffolding is manually added, users specify `subresource_names` in the variable:
 
 ```hcl
 private_endpoints = {
@@ -631,33 +489,19 @@ private_endpoints = {
 }
 ```
 
-Runtime discovery of available sub-resources would require Azure API queries (future enhancement).
-
 ---
 
 ### 3. Customer-Managed Key Variations
 
-**Problem:** Encryption patterns vary widely:
+**Problem:** Encryption patterns vary widely across resource types.
 
-- Disk encryption (VM disks, temp storage)
-- Data encryption at rest (databases, storage)
-- Transport encryption (TLS/SSL)
-- Double encryption (platform + customer keys)
-
-Different key storage:
-- Azure Key Vault
-- Azure Managed HSM
-- Azure Dedicated HSM
-
-**Current approach:** Detect presence of encryption properties, generate generic CMK scaffolding.
-
-**Improvement:** Document per-service encryption patterns in generated code comments.
+Since CMK detection has been de-prioritised, this is deferred to a future enhancement. When CMK scaffolding is manually added, it uses the generic AVM utility module pattern.
 
 ---
 
 ### 4. Child Resource Monitoring
 
-**Problem:** No spec indicator for which children emit independent logs.
+**Problem:** No resource definition indicator for which children emit independent logs.
 
 **Heuristics that might help:**
 - Child has state machines or processing (likely monitorable)
@@ -678,20 +522,14 @@ Different key storage:
 
 ### Unit Tests
 
-Test detection functions against known spec patterns:
+Test detection functions against known bicep-types-az resource definitions:
 
 ```go
-func TestDetectPrivateEndpoints(t *testing.T) {
-    tests := []struct{
-        name     string
-        specPath string
-        want     bool
-    }{
-        {"managedEnvironments", "specs/managedEnvironments.json", true},
-        {"managedClusters", "specs/managedClusters.json", true},
-        {"resourceGroups", "specs/resourceGroups.json", false},
-    }
-    // ...
+func TestConvertResource_SupportsIdentity(t *testing.T) {
+    // Test resources with writable identity.type → SupportsIdentity = true
+    // Test resources with writable identity.userAssignedIdentities → SupportsIdentity = true
+    // Test resources with read-only identity → SupportsIdentity = false
+    // Test resources without identity property → SupportsIdentity = false
 }
 ```
 
@@ -719,11 +557,13 @@ func TestInterfacesGeneration_ManagedEnvironments(t *testing.T) {
 
 ## Migration Plan
 
-### Phase 1: Update Detection Logic ✅ (Current)
+### Phase 1: Migrate to bicep-types-az ✅ (Complete)
 
-- [x] Add `isChild` parameter to `DetectInterfaceCapabilities()`
-- [x] Update detection to use ARM platform defaults
-- [x] Add `SupportsLocks` and `SupportsRoleAssignments` fields
+- [x] Replace OpenAPI-based detection with bicep-types-az schema analysis
+- [x] Implement `detectSupportsIdentity()` in `schema/convert.go`
+- [x] De-prioritise private endpoint detection (not available in bicep-types)
+- [x] De-prioritise CMK detection (heuristic unreliable)
+- [x] Update `InterfaceCapabilities` struct (removed `SupportsLocks`, `SupportsRoleAssignments` — ARM defaults handled elsewhere)
 
 ### Phase 2: Update Code Generation
 
@@ -742,45 +582,48 @@ func TestInterfacesGeneration_ManagedEnvironments(t *testing.T) {
 
 - [ ] Add `--force-diagnostics` / `--skip-diagnostics` flags
 - [ ] Add `--force-cmk` flag
+- [ ] Add `--force-pe` flag
 - [ ] Add `--skip-interfaces` for minimal generation
 
 ---
 
 ## Decision Record
 
-**Date:** 2025-12-29
+**Date:** 2025-12-29 (original), updated 2026-03 for bicep-types-az migration
 
-**Decision:** Adopt hybrid detection strategy combining spec-based detection with ARM platform defaults.
+**Decision:** Adopt hybrid detection strategy combining schema-based detection with ARM platform defaults. After migrating from OpenAPI to bicep-types-az, only managed identity is auto-detected from resource definitions.
 
 **Rationale:**
 
-1. **Accuracy**: Specs reliably indicate Private Endpoint support
-2. **Completeness**: ARM platform capabilities (locks, RBAC) are universal
-3. **Usability**: Over-generation is acceptable when users can easily opt out
-4. **Maintainability**: Defaults reduce need for per-resource customization
+1. **Data source change**: Migration from OpenAPI specs to bicep-types-az removed access to API path information needed for private endpoint detection
+2. **Managed identity**: Reliably detectable from bicep-types ObjectType properties (writable `identity` property)
+3. **CMK heuristic**: De-prioritised due to unreliable detection across resource types
+4. **Completeness**: ARM platform capabilities (locks, RBAC, diagnostics) are universal and don't require detection
+5. **Usability**: Over-generation of ARM defaults is acceptable when users can easily opt out
 
 **For Parent Resources:**
-- ✅ Private Endpoints: Detect from specs
+- ❌ Private Endpoints: Not auto-detected (de-prioritised)
 - ✅ Diagnostic Settings: Always generate (ARM platform default)
 - ✅ Locks: Always generate (universal ARM)
 - ✅ Role Assignments: Always generate (universal ARM)
-- ⚠️ Customer-Managed Keys: Detect from specs (heuristic)
-- ✅ Managed Identities: Detect from specs (high confidence)
+- ❌ Customer-Managed Keys: Not auto-detected (de-prioritised)
+- ✅ Managed Identities: Detect from schema (high confidence)
 
 **For Child Resources:**
-- ✅ Private Endpoints: Detect from specs
+- ❌ Private Endpoints: Not auto-detected (de-prioritised)
 - ✅ Diagnostic Settings: Always generate with documentation
 - ✅ Locks: Always generate (universal ARM)
 - ✅ Role Assignments: Always generate (universal ARM)
-- ⚠️ Customer-Managed Keys: Detect from specs (heuristic)
-- ✅ Managed Identities: Detect from specs (rare for children)
+- ❌ Customer-Managed Keys: Not auto-detected (de-prioritised)
+- ✅ Managed Identities: Detect from schema (rare for children)
 
 **Alternatives Considered:**
 
-1. **Spec-only detection**: Rejected due to missing cross-cutting ARM capabilities
+1. **OpenAPI spec-only detection**: Abandoned — migrated to bicep-types-az which doesn't expose API paths
 2. **All-or-nothing generation**: Rejected due to loss of granularity
 3. **Runtime Azure API queries**: Deferred to future (adds complexity and auth requirements)
 4. **Hardcoded allow-lists**: Rejected due to maintenance burden
+5. **Heuristic CMK/PE detection on bicep-types**: De-prioritised — effort/reliability trade-off not justified
 
 **Status:** Approved, implementation in progress
 
@@ -790,7 +633,7 @@ func TestInterfacesGeneration_ManagedEnvironments(t *testing.T) {
 
 - [Azure Verified Modules](https://azure.github.io/Azure-Verified-Modules/)
 - [AVM Interfaces Utility Module](https://github.com/Azure/terraform-azure-avm-utl-interfaces)
-- [Azure REST API Specs](https://github.com/Azure/azure-rest-api-specs)
+- [bicep-types-az](https://github.com/Azure/bicep-types-az) — resource type definitions used for schema analysis
 - [ARM Template Reference - Locks](https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/lock-resources)
 - [ARM Template Reference - Role Assignments](https://learn.microsoft.com/en-us/azure/role-based-access-control/overview)
 - [ARM Template Reference - Diagnostic Settings](https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/diagnostic-settings)

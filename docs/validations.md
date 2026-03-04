@@ -1,23 +1,23 @@
 # Validation Block Generation
 
-This document describes the validation block generation feature that automatically creates Terraform validation blocks based on OpenAPI/Swagger schema constraints.
+This document describes the validation block generation feature that automatically creates Terraform validation blocks based on bicep-types-az resource type constraints.
 
 ## Overview
 
-The tool now generates validation blocks for Terraform variables based on constraints defined in the OpenAPI specification. This helps catch invalid inputs early and provides better user experience with clear error messages.
+The tool generates validation blocks for Terraform variables based on constraints defined in bicep-types-az type definitions. This helps catch invalid inputs early and provides better user experience with clear error messages.
 
 ## Supported Constraint Types
 
 ### 1. String Validations
 
-#### minLength
+#### MinLength
 Validates minimum string length.
 
-**OpenAPI:**
-```json
-{
-  "type": "string",
-  "minLength": 3
+**bicep-types:**
+```go
+// StringType from bicep-types-go
+&types.StringType{
+    MinLength: ptr(int64(3)),
 }
 ```
 
@@ -29,14 +29,14 @@ validation {
 }
 ```
 
-#### maxLength
+#### MaxLength
 Validates maximum string length.
 
-**OpenAPI:**
-```json
-{
-  "type": "string",
-  "maxLength": 100
+**bicep-types:**
+```go
+// StringType from bicep-types-go
+&types.StringType{
+    MaxLength: ptr(int64(100)),
 }
 ```
 
@@ -48,33 +48,14 @@ validation {
 }
 ```
 
-#### format (UUID only)
-Validates UUID format using regex.
-
-**OpenAPI:**
-```json
-{
-  "type": "string",
-  "format": "uuid"
-}
-```
-
-**Generated Terraform:**
-```hcl
-validation {
-  condition     = var.id == null || can(regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", var.id))
-  error_message = "id must be a valid UUID."
-}
-```
-
-#### pattern
+#### Pattern
 Validates string against a regular expression pattern.
 
-**OpenAPI:**
-```json
-{
-  "type": "string",
-  "pattern": "^[a-zA-Z0-9-_]{1,63}$"
+**bicep-types:**
+```go
+// StringType from bicep-types-go
+&types.StringType{
+    Pattern: "^[a-zA-Z0-9-_]{1,63}$",
 }
 ```
 
@@ -88,15 +69,15 @@ validation {
 
 ### 2. Array/List Validations
 
-#### minItems
-Validates minimum number of array items.
+#### MinLength (minItems)
+Validates minimum number of array items. In bicep-types, array item count constraints use `MinLength`/`MaxLength` on `ArrayType`.
 
-**OpenAPI:**
-```json
-{
-  "type": "array",
-  "minItems": 1,
-  "items": {"type": "string"}
+**bicep-types:**
+```go
+// ArrayType from bicep-types-go
+&types.ArrayType{
+    ItemType:  &types.TypeReference{Type: stringTypeIndex},
+    MinLength: ptr(int64(1)),
 }
 ```
 
@@ -108,15 +89,15 @@ validation {
 }
 ```
 
-#### maxItems
+#### MaxLength (maxItems)
 Validates maximum number of array items.
 
-**OpenAPI:**
-```json
-{
-  "type": "array",
-  "maxItems": 10,
-  "items": {"type": "string"}
+**bicep-types:**
+```go
+// ArrayType from bicep-types-go
+&types.ArrayType{
+    ItemType:  &types.TypeReference{Type: stringTypeIndex},
+    MaxLength: ptr(int64(10)),
 }
 ```
 
@@ -128,36 +109,16 @@ validation {
 }
 ```
 
-#### uniqueItems
-Validates that array items are unique.
-
-**OpenAPI:**
-```json
-{
-  "type": "array",
-  "uniqueItems": true,
-  "items": {"type": "string"}
-}
-```
-
-**Generated Terraform:**
-```hcl
-validation {
-  condition     = var.unique_list == null || length(distinct(var.unique_list)) == length(var.unique_list)
-  error_message = "unique_list must contain unique items."
-}
-```
-
 ### 3. Numeric Validations
 
-#### minimum
+#### MinValue
 Validates minimum numeric value.
 
-**OpenAPI:**
-```json
-{
-  "type": "integer",
-  "minimum": 1
+**bicep-types:**
+```go
+// IntegerType from bicep-types-go
+&types.IntegerType{
+    MinValue: ptr(int64(1)),
 }
 ```
 
@@ -169,14 +130,14 @@ validation {
 }
 ```
 
-#### maximum
+#### MaxValue
 Validates maximum numeric value.
 
-**OpenAPI:**
-```json
-{
-  "type": "number",
-  "maximum": 100
+**bicep-types:**
+```go
+// IntegerType from bicep-types-go
+&types.IntegerType{
+    MaxValue: ptr(int64(100)),
 }
 ```
 
@@ -188,75 +149,23 @@ validation {
 }
 ```
 
-#### exclusiveMinimum
-Validates exclusive minimum (value must be greater than, not equal to).
-
-**OpenAPI:**
-```json
-{
-  "type": "number",
-  "minimum": 0,
-  "exclusiveMinimum": true
-}
-```
-
-**Generated Terraform:**
-```hcl
-validation {
-  condition     = var.rating == null || var.rating > 0
-  error_message = "rating must be greater than 0."
-}
-```
-
-#### exclusiveMaximum
-Validates exclusive maximum (value must be less than, not equal to).
-
-**OpenAPI:**
-```json
-{
-  "type": "integer",
-  "maximum": 10,
-  "exclusiveMaximum": true
-}
-```
-
-**Generated Terraform:**
-```hcl
-validation {
-  condition     = var.scale == null || var.scale < 10
-  error_message = "scale must be less than 10."
-}
-```
-
-#### multipleOf
-Validates that a number is a multiple of the specified value.
-
-**OpenAPI:**
-```json
-{
-  "type": "integer",
-  "multipleOf": 5
-}
-```
-
-**Generated Terraform:**
-```hcl
-validation {
-  condition     = var.size == null || abs(mod(var.size, 5)) < 0.000001
-  error_message = "size must be a multiple of 5."
-}
-```
-
 ### 4. Enum Validations
 
-Enum validations are generated for properties with restricted value sets.
+Enum validations are generated for properties with restricted value sets. In bicep-types, enums are represented as a `UnionType` containing references to `StringLiteralType` entries.
 
-#### Direct enum
-**OpenAPI:**
-```json
-{
-  "type": "string",
-  "enum": ["Free", "Basic", "Premium"]
+**bicep-types:**
+```go
+// UnionType referencing StringLiteralType entries
+// Given types array containing:
+//   [5] = &types.StringLiteralType{Value: "Free"}
+//   [6] = &types.StringLiteralType{Value: "Basic"}
+//   [7] = &types.StringLiteralType{Value: "Premium"}
+&types.UnionType{
+    Elements: []*types.TypeReference{
+        {Type: 5},
+        {Type: 6},
+        {Type: 7},
+    },
 }
 ```
 
@@ -265,48 +174,6 @@ Enum validations are generated for properties with restricted value sets.
 validation {
   condition     = var.tier == null || contains(["Basic", "Free", "Premium"], var.tier)
   error_message = "tier must be one of: [\"Basic\", \"Free\", \"Premium\"]."
-}
-```
-
-#### Enum via allOf
-**OpenAPI:**
-```json
-{
-  "allOf": [
-    {"type": "string"},
-    {"enum": ["Enabled", "Disabled"]}
-  ]
-}
-```
-
-**Generated Terraform:**
-```hcl
-validation {
-  condition     = var.status == null || contains(["Disabled", "Enabled"], var.status)
-  error_message = "status must be one of: [\"Disabled\", \"Enabled\"]."
-}
-```
-
-#### Azure x-ms-enum extension
-**OpenAPI:**
-```json
-{
-  "type": "string",
-  "x-ms-enum": {
-    "name": "SkuName",
-    "values": [
-      {"value": "Free"},
-      {"value": "Basic"}
-    ]
-  }
-}
-```
-
-**Generated Terraform:**
-```hcl
-validation {
-  condition     = var.sku == null || contains(["Basic", "Free"], var.sku)
-  error_message = "sku must be one of: [\"Basic\", \"Free\"]."
 }
 ```
 
@@ -332,14 +199,11 @@ Enum values are sorted alphabetically for stable, predictable output:
 contains(["Basic", "Free", "Premium", "Standard"], var.tier)
 ```
 
-### Conservative Format Validation
-Only UUID format is currently validated to avoid false positives. Other formats are not validated by default.
-
 ### Human-Readable Error Messages
 Error messages are clear and actionable:
 - "name must have a minimum length of 3."
 - "count must be greater than or equal to 1."
-- "tags must contain unique items."
+- "tier must be one of: [\"Basic\", \"Free\", \"Premium\"]."
 
 ## Limitations
 
@@ -347,40 +211,44 @@ Error messages are clear and actionable:
 
   Nested object validations are generated conservatively for object-typed variables: scalar fields and arrays of scalars may receive validations when they are represented as direct attributes on `var.<object>.<field>`. Deeply nested structures are not exhaustively validated.
 
-2. **Format validation**: Only UUID format is validated. Other formats (email, date-time, etc.) are not validated by default.
+2. **uniqueItems validation**: Not available. bicep-types-az does not expose a `uniqueItems` constraint, so duplicate-item checks cannot be generated.
 
-3. **Read-only properties**: Validations are not generated for read-only properties as they cannot be set by users.
+3. **multipleOf validation**: Not available. bicep-types-az does not expose a `multipleOf` constraint.
+
+4. **exclusiveMinimum / exclusiveMaximum**: These are pre-resolved by the bicep-types generator — the bounds are already adjusted so only `>=` and `<=` comparisons are generated. There is no separate exclusive-bound check.
+
+5. **UUID format validation**: Not available. bicep-types-az does not surface string format information, so UUID format checks are not generated.
+
+6. **Read-only properties**: Validations are not generated for read-only properties as they cannot be set by users.
 
 ## Examples
 
 ### Real-World Azure Spec Example
 
-Using the AKS managedClusters specification:
+Using the AKS managedClusters resource type:
 ```bash
 ./tfmodmake \
-  -spec https://raw.githubusercontent.com/Azure/azure-rest-api-specs/main/specification/containerservice/resource-manager/Microsoft.ContainerService/aks/stable/2025-10-01/managedClusters.json \
-  -resource Microsoft.ContainerService/managedClusters
+  --resource Microsoft.ContainerService/managedClusters \
+  --api-version 2025-10-01
 ```
 
 This generates validations for enum fields like `publicNetworkAccess` and `supportPlan`:
 ```hcl
 validation {
   condition     = var.public_network_access == null || contains(["Disabled", "Enabled"], var.public_network_access)
-  error_message = "public_network_access must be one of: [\"Disabled\"], \"Enabled\"."
+  error_message = "public_network_access must be one of: [\"Disabled\", \"Enabled\"]."
 }
 ```
 
 ## Testing
 
-The validation generation feature is thoroughly tested:
-- 16 unit tests covering all constraint types
+The validation generation feature is tested with:
+- Unit tests covering all supported constraint types (string, integer, array, enum)
 - Integration tests with comprehensive scenarios
-- Real-world spec testing with Azure resources
-- All existing tests continue to pass (no regressions)
+- Real-world resource type testing with Azure bicep-types-az data
 
 ## Future Enhancements
 
 Potential future improvements:
-1. Additional format validators (email, date-time, etc.)
-2. Nested property validations (with opt-in to control verbosity)
-3. Custom validation extensions via configuration
+1. Nested property validations (with opt-in to control verbosity)
+2. Custom validation extensions via configuration
