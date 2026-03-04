@@ -92,6 +92,7 @@ func generateWithOpts(o *generatorOptions) error {
 	supportsIdentity := SupportsIdentity(o.schema)
 	supportsTags := SupportsTags(o.schema)
 	supportsLocation := SupportsLocation(o.schema)
+	hasDiscriminator := schema.HasDiscriminator(o.schema)
 
 	// Build interface capabilities from schema
 	caps := InterfaceCapabilities{
@@ -115,7 +116,7 @@ func generateWithOpts(o *generatorOptions) error {
 			return err
 		}
 	}
-	if err := generateMain(o.schema, o.resourceType, o.apiVersion, o.localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, secrets, o.outputDir); err != nil {
+	if err := generateMain(o.schema, o.resourceType, o.apiVersion, o.localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, hasDiscriminator, secrets, o.outputDir); err != nil {
 		return err
 	}
 	if err := generateOutputs(o.schema, o.outputDir); err != nil {
@@ -175,6 +176,7 @@ func GenerateInMemory(resourceType string, opts ...GeneratorOption) (*GeneratedM
 	supportsIdentity := SupportsIdentity(o.schema)
 	supportsTags := SupportsTags(o.schema)
 	supportsLocation := SupportsLocation(o.schema)
+	hasDiscriminator := schema.HasDiscriminator(o.schema)
 
 	caps := InterfaceCapabilities{
 		SupportsManagedIdentity: supportsIdentity,
@@ -203,7 +205,7 @@ func GenerateInMemory(resourceType string, opts ...GeneratorOption) (*GeneratedM
 		}
 	}
 
-	mod.Main = buildMain(o.schema, o.resourceType, o.apiVersion, o.localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, secrets)
+	mod.Main = buildMain(o.schema, o.resourceType, o.apiVersion, o.localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, hasDiscriminator, secrets)
 
 	return mod, nil
 }

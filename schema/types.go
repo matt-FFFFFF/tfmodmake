@@ -109,6 +109,39 @@ type Property struct {
 	Discriminator string
 }
 
+// HasDiscriminator reports whether the resource schema contains any
+// discriminated object type at any nesting level. This is used to disable
+// azapi embedded schema validation, which rejects unknown discriminator
+// values during terraform validate when variables have not yet been assigned.
+func HasDiscriminator(rs *ResourceSchema) bool {
+	if rs == nil {
+		return false
+	}
+	return hasDiscriminatorInProperties(rs.Properties)
+}
+
+func hasDiscriminatorInProperties(props map[string]*Property) bool {
+	for _, prop := range props {
+		if prop == nil {
+			continue
+		}
+		if prop.Discriminator != "" {
+			return true
+		}
+		if prop.Type == TypeObject && len(prop.Children) > 0 {
+			if hasDiscriminatorInProperties(prop.Children) {
+				return true
+			}
+		}
+		if prop.Type == TypeArray && prop.ItemType != nil && prop.ItemType.Type == TypeObject {
+			if hasDiscriminatorInProperties(prop.ItemType.Children) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsScalar returns true if the property represents a scalar (leaf) value.
 func (p *Property) IsScalar() bool {
 	switch p.Type {

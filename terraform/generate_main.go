@@ -23,7 +23,7 @@ func cleanTypeString(typeStr string) string {
 	return strings.Join(cleaned, "/")
 }
 
-func buildMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema bool, secrets []secretField) *hclwrite.File {
+func buildMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema, hasDiscriminator bool, secrets []secretField) *hclwrite.File {
 	file := hclwrite.NewEmptyFile()
 	body := file.Body()
 
@@ -46,6 +46,16 @@ func buildMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName st
 	resourceBody.SetAttributeValue("body", cty.EmptyObjectVal)
 	if hasSchema {
 		resourceBody.SetAttributeRaw("body", hclgen.TokensForTraversal("local", localName))
+	}
+
+	// Disable embedded schema validation for resources whose body contains a
+	// discriminated object type (e.g. javaComponents with componentType).
+	// The azapi provider performs enum validation on discriminator properties at
+	// plan/validate time, but Terraform passes "unknown" for unset variables
+	// which the provider rejects as an invalid discriminator value.
+	// TODO: re-enable once the azapi provider handles unknown discriminator values gracefully.
+	if hasDiscriminator {
+		resourceBody.SetAttributeValue("schema_validation_enabled", cty.False)
 	}
 
 	// Add sensitive_body if there are secrets
@@ -102,6 +112,6 @@ func buildMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName st
 	return file
 }
 
-func generateMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema bool, secrets []secretField, outputDir string) error {
-	return hclgen.WriteFileToDir(outputDir, "main.tf", buildMain(rs, resourceType, apiVersion, localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, secrets))
+func generateMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName string, supportsTags, supportsLocation, supportsIdentity, hasSchema, hasDiscriminator bool, secrets []secretField, outputDir string) error {
+	return hclgen.WriteFileToDir(outputDir, "main.tf", buildMain(rs, resourceType, apiVersion, localName, supportsTags, supportsLocation, supportsIdentity, hasSchema, hasDiscriminator, secrets))
 }

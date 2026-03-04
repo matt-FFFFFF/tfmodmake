@@ -89,13 +89,13 @@ run_update_case() {
 
   local resource="Microsoft.ContainerService/managedClusters"
 
-  # Step 1: Generate initial module with stable API version
-  (cd "$workdir" && "$TFMODMAKE_BIN" gen --resource "$resource" >/dev/null)
+  # Step 1: Generate with the previous stable API version
+  (cd "$workdir" && "$TFMODMAKE_BIN" gen --resource "$resource" --api-version "2025-09-01" >/dev/null)
   (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
   (cd "$workdir" && terraform validate -no-color >/dev/null)
 
-  # Step 2: Update to latest preview version
-  (cd "$workdir" && "$TFMODMAKE_BIN" update --include-preview >/dev/null)
+  # Step 2: Update to the latest stable version
+  (cd "$workdir" && "$TFMODMAKE_BIN" update --api-version "2025-10-01" >/dev/null)
   (cd "$workdir" && terraform init -backend=false -input=false -no-color >/dev/null)
   (cd "$workdir" && terraform validate -no-color >/dev/null)
 
