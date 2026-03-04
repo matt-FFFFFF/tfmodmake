@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/matt-FFFFFF/tfmodmake/hclgen"
 	"github.com/matt-FFFFFF/tfmodmake/naming"
@@ -55,6 +56,12 @@ func buildMain(rs *schema.ResourceSchema, resourceType, apiVersion, localName st
 	// which the provider rejects as an invalid discriminator value.
 	// TODO: re-enable once the azapi provider handles unknown discriminator values gracefully.
 	if hasDiscriminator {
+		resourceBody.AppendUnstructuredTokens(hclwrite.Tokens{
+			&hclwrite.Token{Type: hclsyntax.TokenComment, Bytes: []byte("# Disabled because the body contains a discriminated object type whose")},
+			&hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
+			&hclwrite.Token{Type: hclsyntax.TokenComment, Bytes: []byte("# discriminator property value is unknown at validate time.")},
+			&hclwrite.Token{Type: hclsyntax.TokenNewline, Bytes: []byte("\n")},
+		})
 		resourceBody.SetAttributeValue("schema_validation_enabled", cty.False)
 	}
 
