@@ -29,6 +29,10 @@ func CollectSecretFields(schema *ResourceSchema) []SecretField {
 
 // collectSecretsRecursive recursively walks properties to find sensitive fields.
 func collectSecretsRecursive(prop *Property, path string, secrets []SecretField) []SecretField {
+	if prop == nil {
+		return secrets
+	}
+
 	if prop.Sensitive {
 		secrets = append(secrets, SecretField{
 			Path:     path,

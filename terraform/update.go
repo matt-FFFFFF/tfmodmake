@@ -36,6 +36,8 @@ type UpdateOptions struct {
 	// for 3-way comparison. If empty, the version is extracted from main.tf.
 	OldAPIVersion string
 	// NewAPIVersion is the target API version to update the module to.
+	// If empty, the latest stable version is resolved automatically
+	// (or latest preview if IncludePreview is set).
 	NewAPIVersion string
 	// IncludePreview, when true, includes preview API versions when loading resources.
 	IncludePreview bool
