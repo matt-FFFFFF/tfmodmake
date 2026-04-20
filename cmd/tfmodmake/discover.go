@@ -30,6 +30,18 @@ func DiscoverCommand() *cli.Command {
 						Name:  "json",
 						Usage: "Output results as JSON",
 					},
+					&cli.IntFlag{
+						Name:     "depth",
+						Usage:    "Depth of child resource discovery (default: 1)",
+						OnlyOnce: true,
+						Value:    1,
+						Validator: func(i int) error {
+							if i < 1 || i > 6 {
+								return fmt.Errorf("depth must be at least 1 and at most 6")
+							}
+							return nil
+						},
+					},
 				},
 				Action: runDiscoverChildren,
 			},
@@ -62,7 +74,7 @@ func runDiscoverChildren(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("failed to parse bicep-types index: %w", err)
 	}
 
-	children := schema.DiscoverChildren(idx, parent, 0)
+	children := schema.DiscoverChildren(idx, parent, cmd.Int("depth"))
 
 	if jsonOutput {
 		data, err := json.MarshalIndent(children, "", "  ")
