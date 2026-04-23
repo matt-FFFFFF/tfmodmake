@@ -2,6 +2,7 @@ package bicepdata
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,24 @@ import (
 	"github.com/Azure/bicep-types/src/bicep-types-go/index"
 	"github.com/Azure/bicep-types/src/bicep-types-go/types"
 )
+
+// ErrNoStableVersions is returned when a resource type has only preview API versions
+// and --include-preview was not specified.
+type ErrNoStableVersions struct {
+	ResourceType    string
+	PreviewVersions []string
+}
+
+func (e *ErrNoStableVersions) Error() string {
+	return fmt.Sprintf("no stable API versions found for %s (preview versions available: %s); use --include-preview to select one",
+		e.ResourceType, strings.Join(e.PreviewVersions, ", "))
+}
+
+// IsErrNoStableVersions reports whether err (or any error in its chain) is an ErrNoStableVersions.
+func IsErrNoStableVersions(err error) bool {
+	var target *ErrNoStableVersions
+	return errors.As(err, &target)
+}
 
 // LoadedResource contains a resolved resource type and its supporting type array.
 type LoadedResource struct {
@@ -159,8 +178,7 @@ func resolveLatestVersion(idx *index.TypeIndex, resourceType string, includePrev
 	}
 
 	if len(preview) > 0 {
-		return "", fmt.Errorf("no stable API versions found for %s (preview versions available: %s); use --include-preview to select one",
-			resourceType, strings.Join(preview, ", "))
+		return "", &ErrNoStableVersions{ResourceType: resourceType, PreviewVersions: preview}
 	}
 
 	return "", fmt.Errorf("no API versions found for resource type %s", resourceType)

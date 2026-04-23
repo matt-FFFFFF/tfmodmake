@@ -258,6 +258,10 @@ func orchestrateAVMGeneration(ctx context.Context, resourceType, apiVersion stri
 			modulePath := filepath.Join(moduleDir, moduleName)
 
 			if err := generateChildModule(ctx, child.ResourceType, apiVersion, includePreview, modulePath); err != nil {
+				if bicepdata.IsErrNoStableVersions(err) {
+					fmt.Fprintf(os.Stderr, "  [%d/%d] WARNING: skipping %s — only preview API versions available (use --include-preview to include)\n", i+1, len(children), child.ResourceType)
+					continue
+				}
 				return fmt.Errorf("failed to generate child module for %s: %w", child.ResourceType, err)
 			}
 
